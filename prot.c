@@ -2268,6 +2268,7 @@ h_accept(const int fd, const short which, Server *s)
     epollq_apply();
 }
 
+// NOTE: init global tubes, create default tube
 void
 prot_init()
 {

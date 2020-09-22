@@ -10,7 +10,7 @@ static int cur_prime = 0;
 static Job *all_jobs_init[12289] = {0};
 static Job **all_jobs = all_jobs_init;
 static size_t all_jobs_cap = 12289; /* == primes[0] */
-static size_t all_jobs_used = 0;
+static size_t all_jobs_used = 0; // NOTE: used slot count
 
 static int hash_table_was_oom = 0;
 
@@ -19,7 +19,7 @@ static void rehash(int);
 static int
 _get_job_hash_index(uint64 job_id)
 {
-    return job_id % all_jobs_cap;
+    return job_id % all_jobs_cap; // NOTE: mod hash
 }
 
 static void
@@ -29,7 +29,7 @@ store_job(Job *j)
 
     index = _get_job_hash_index(j->r.id);
 
-    j->ht_next = all_jobs[index];
+    j->ht_next = all_jobs[index]; // NOTE: fresh job put as head of linked list
     all_jobs[index] = j;
     all_jobs_used++;
 
@@ -55,7 +55,7 @@ rehash(int is_upscaling)
     all_jobs = calloc(all_jobs_cap, sizeof(Job *));
     if (!all_jobs) {
         twarnx("Failed to allocate %zu new hash buckets", all_jobs_cap);
-        hash_table_was_oom = 1;
+        hash_table_was_oom = 1; // NOTE: tag oom, interrupt rehash, but not panic
         cur_prime = old_prime;
         all_jobs = old;
         all_jobs_cap = old_cap;
@@ -65,6 +65,8 @@ rehash(int is_upscaling)
     all_jobs_used = 0;
     hash_table_was_oom = 0;
 
+    // NOTE: traverse slots, traverse slot linked list
+    // NOTE: extract job and store into new hashtable
     for (i = 0; i < old_cap; i++) {
         while (old[i]) {
             Job *j = old[i];
@@ -165,12 +167,14 @@ job_free(Job *j)
     free(j);
 }
 
+// NOTE: record index of current job in it's tube heap
 void
 job_setpos(void *j, size_t pos)
 {
     ((Job *)j)->heap_index = pos;
 }
 
+// NOTE: compare priority of two jobs, using in tube ready heap
 int
 job_pri_less(void *ja, void *jb)
 {
@@ -181,6 +185,7 @@ job_pri_less(void *ja, void *jb)
     return a->r.id < b->r.id;
 }
 
+// NOTE: compare delay of 2 jobs, using in tube delay heap
 int
 job_delay_less(void *ja, void *jb)
 {

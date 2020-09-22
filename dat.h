@@ -13,7 +13,7 @@ typedef struct Ms     Ms;
 typedef struct Job    Job;
 typedef struct Tube   Tube;
 typedef struct Conn   Conn;
-typedef struct Heap   Heap;
+typedef struct Heap   Heap; // NOTE: min heap
 typedef struct Jobrec Jobrec;
 typedef struct File   File;
 typedef struct Socket Socket;
@@ -42,6 +42,7 @@ typedef int(FAlloc)(int, int);
 #endif
 
 // The name of a tube cannot be longer than MAX_TUBE_NAME_LEN-1
+// NOTE: tube name length max 200
 #define MAX_TUBE_NAME_LEN 201
 
 // A command can be at most LINE_BUF_SIZE chars, including "\r\n". This value
@@ -52,9 +53,10 @@ typedef int(FAlloc)(int, int);
 #define min(a,b) ((a)<(b)?(a):(b))
 
 // Jobs with priority less than URGENT_THRESHOLD are counted as urgent.
+// NOTE: lower is more urgent
 #define URGENT_THRESHOLD 1024
 
-// The default maximum job size.
+// The default maximum job size. // NOTE: 64MB
 #define JOB_DATA_SIZE_LIMIT_DEFAULT ((1 << 16) - 1)
 
 // The maximum value that job_data_size_limit can be set to via "-z".
@@ -66,6 +68,7 @@ typedef int(FAlloc)(int, int);
 #define DEFAULT_FSYNC_MS 50
 
 // Use this macro to designate unused parameters in functions.
+// NOTE: convert x to void, pass unused var check
 #define UNUSED_PARAMETER(x) (void)(x)
 
 // version is defined in vers.c, see vers.sh for details.
@@ -81,11 +84,11 @@ extern FAlloc *falloc;
 
 // stats structure holds counters for operations, both globally and per tube.
 struct stats {
-    uint64 urgent_ct;
-    uint64 waiting_ct;
+    uint64 urgent_ct; // NOTE: urgent jobs which priority < 1024
+    uint64 waiting_ct; // NOTE: reserving conns
     uint64 buried_ct;
     uint64 reserved_ct;
-    uint64 pause_ct;
+    uint64 pause_ct; // NOTE: pause-tube exec counts
     uint64 total_delete_ct;
     uint64 total_jobs_ct;
 };
@@ -103,7 +106,7 @@ struct Heap {
     size_t  len;                // amount of elements in the heap
     void    **data;             // actual elements
 
-    less_fn   less;
+    less_fn   less; // NOTE: function pointer allow user define data compare and operation
     setpos_fn setpos;
 };
 int   heapinsert(Heap *h, void *x);
@@ -208,8 +211,8 @@ struct Jobrec {
     int64  created_at;
 
     // deadline_at is a timestamp, in nsec, that points to:
-    // * time when job will become ready for delayed job,
-    // * time when TTR is about to expire for reserved job,
+    // * time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
+    // * time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> released
     // * undefined otherwise.
     int64  deadline_at;
 
@@ -225,11 +228,11 @@ struct Job {
      // persistent fields; these get written to the wal
     Jobrec r;
 
-    // bookeeping fields; these are in-memory only
+    // bookkeeping fields; these are in-memory only
     char pad[6];
     Tube *tube;
-    Job *prev, *next;           // linked list of jobs
-    Job *ht_next;               // Next job in a hash table list
+    Job *prev, *next;           // linked list of jobs // NOTE: using for buried queue
+    Job *ht_next;               // Next job in a hash table list // NOTE: using for tube heap linked list
     size_t heap_index;          // where is this job in its current heap
     File *file;
     Job  *fnext;
@@ -242,10 +245,10 @@ struct Job {
 };
 
 struct Tube {
-    uint refs;
+    uint refs; // NOTE: reference count
     char name[MAX_TUBE_NAME_LEN];
-    Heap ready;
-    Heap delay;
+    Heap ready; // NOTE: not-ready jobs sorted by priority
+    Heap delay; // NOTE: not-delay jobs sorted by duration
     Ms waiting_conns;           // conns waiting for the job at this moment
     struct stats stat;
     uint using_ct;
@@ -328,6 +331,7 @@ void  tube_dref(Tube *t);
 void  tube_iref(Tube *t);
 Tube *tube_find(const char *name);
 Tube *tube_find_or_make(const char *name);
+// NOTE: assign tube b to tube a
 #define TUBE_ASSIGN(a,b) (tube_dref(a), (a) = (b), tube_iref(a))
 
 
@@ -376,7 +380,7 @@ struct Conn {
     int64  tickat;      // time at which to do more work; determines pos in heap
     size_t tickpos;     // position in srv->conns, stale when in_conns=0
     byte   in_conns;    // 1 if the conn is in srv->conns heap, 0 otherwise
-    Job    *soonest_job;// memoization of the soonest job
+    Job    *soonest_job;// memoization of the soonest job // NOTE: the soonest expiring job in reserved jobs
     int    rw;          // currently want: 'r', 'w', or 'h'
 
     // How long client should "wait" for the next job; -1 means forever.
@@ -385,10 +389,12 @@ struct Conn {
     // Used to inform state machine that client no longer waits for the data.
     char   halfclosed;
 
+    // NOTE: request buffer
     char   cmd[LINE_BUF_SIZE];     // this string is NOT NUL-terminated
     size_t cmd_len;
     int    cmd_read;
 
+    // NOTE: response buffer
     char *reply;
     int  reply_len;
     int  reply_sent;
@@ -398,9 +404,11 @@ struct Conn {
     // while in_job_read is nonzero, we are in bit bucket mode and
     // in_job_read's meaning is inverted -- then it counts the bytes that
     // remain to be thrown away.
+    // NOTE: reading job
     int64 in_job_read;
     Job   *in_job;              // a job to be read from the client
 
+    // NOTE: writing job
     Job *out_job;               // a job to be sent to the client
     int out_job_sent;           // how many bytes of *out_job were sent already
 
@@ -428,9 +436,9 @@ enum
 };
 
 struct Wal {
-    int    filesize;
+    int    filesize; // NOTE: -s max binlog file size
     int    use;
-    char   *dir;
+    char   *dir; // NOTE: -b binlog dir
     File   *head;
     File   *cur;
     File   *tail;
@@ -490,6 +498,7 @@ struct Server {
     Socket sock;
 
     // Connections that must produce deadline or timeout, ordered by the time.
+    // NOTE: save ttr count down, reserve timeout, ...
     Heap   conns;
 };
 void srv_acquire_wal(Server *s);

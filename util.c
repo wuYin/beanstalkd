@@ -142,7 +142,7 @@ parse_size_t(char *str)
     char r, x;
     size_t size;
 
-    r = sscanf(str, "%zu%c", &size, &x);
+    r = sscanf(str, "%zu%c", &size, &x); // NOTE: size must be dependent value
     if (1 != r) {
         warnx("invalid size: %s", str);
         usage(5);
@@ -151,13 +151,16 @@ parse_size_t(char *str)
 }
 
 
+// NOTE: traverse argv and parse into server,wal...
 void
 optparse(Server *s, char **argv)
 {
     int64 ms;
     char *arg, *tmp;
-#   define EARGF(x) (*arg ? (tmp=arg,arg="",tmp) : *argv ? *argv++ : (x))
+    // NOTE: if arg empty, try next argv, otherwise fail
+#   define EARGF(x) (*arg ? (tmp=arg,arg="",tmp) : (*argv ? *argv++ : (x)))
 
+    // NOTE: traverse trim `-` prefix and move to value
     while ((arg = *argv++) && *arg++ == '-' && *arg) {
         char c;
         while ((c = *arg++)) {
@@ -198,7 +201,7 @@ optparse(Server *s, char **argv)
                     s->user = EARGF(flagusage("-u"));
                     break;
                 case 'b':
-                    s->wal.dir = EARGF(flagusage("-b"));
+                    s->wal.dir = EARGF(flagusage("-b")); // NOTE: --binlog
                     s->wal.use = 1;
                     break;
                 case 'h':

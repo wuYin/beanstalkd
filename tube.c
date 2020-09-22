@@ -5,6 +5,7 @@
 
 struct Ms tubes;
 
+// NOTE: set ready/delay heap handlers, init buried linked list and waiting_conns queue
 Tube *
 make_tube(const char *name)
 {
@@ -34,13 +35,14 @@ make_tube(const char *name)
 static void
 tube_free(Tube *t)
 {
-    ms_remove(&tubes, t);
+    ms_remove(&tubes, t); // NOTE: remove from global tube list
     free(t->ready.data);
     free(t->delay.data);
     ms_clear(&t->waiting_conns);
     free(t);
 }
 
+// NOTE: decrement ref count of tube t, delete it if nobody refer to it
 void
 tube_dref(Tube *t)
 {
@@ -52,7 +54,7 @@ tube_dref(Tube *t)
 
     --t->refs;
     if (t->refs < 1)
-        tube_free(t);
+        tube_free(t); // NOTE: gc of tubes
 }
 
 void
@@ -74,8 +76,10 @@ make_and_insert_tube(const char *name)
 
     /* We want this global tube list to behave like "weak" refs, so don't
      * increment the ref count. */
+    // NOTE: global tube list weak refer to the new tube, won't incr it ref count
     r = ms_append(&tubes, t);
     if (!r)
+        // NOTE: oom and register failed, delete new tube
         return tube_dref(t), (Tube *) 0;
 
     return t;

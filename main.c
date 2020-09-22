@@ -88,12 +88,14 @@ main(int argc, char **argv)
 
     progname = argv[0];
     setlinebuf(stdout);
-    optparse(&srv, argv+1);
 
+    // NOTE: 1. parse args
+    optparse(&srv, argv+1);
     if (verbose) {
         printf("pid %d\n", getpid());
     }
 
+    // NOTE: 2. init server socket
     int r = make_server_socket(srv.addr, srv.port);
     if (r == -1) {
         twarnx("make_server_socket()");
@@ -108,7 +110,10 @@ main(int argc, char **argv)
         su(srv.user);
     set_sig_handlers();
 
+    // NOTE: 3. recover from WAL
     srv_acquire_wal(&srv);
+
+    // NOTE: 4. serve requests
     srvserve(&srv);
     exit(0);
 }

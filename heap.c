@@ -30,6 +30,7 @@ less(Heap *h, size_t a, size_t b)
 }
 
 
+// NOTE: bubble up and swap with bigger value
 static void
 siftdown(Heap *h, size_t k)
 {
@@ -40,12 +41,14 @@ siftdown(Heap *h, size_t k)
             return;
         }
 
+        // NOTE: swap data in k with parent
         swap(h, k, p);
         k = p;
     }
 }
 
 
+// NOTE: sink down and swap with smaller value
 static void
 siftup(Heap *h, size_t k)
 {
@@ -70,6 +73,7 @@ siftup(Heap *h, size_t k)
 
 // Heapinsert inserts x into heap h according to h->less.
 // It returns 1 on success, otherwise 0.
+// NOTE: insert x into h, grow memory*2 if len reached cap
 int
 heapinsert(Heap *h, void *x)
 {

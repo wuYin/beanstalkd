@@ -16,7 +16,7 @@ static int
 grow(Ms *a)
 {
     void **nitems;
-    size_t ncap = a->cap << 1;
+    size_t ncap = a->cap << 1; // NOTE: grow*2
     if (!ncap)
         ncap = 1;
 
@@ -31,6 +31,7 @@ grow(Ms *a)
     return 1;
 }
 
+// NOTE: append new item into ms, grow double memory if len reach cap
 int
 ms_append(Ms *a, void *item)
 {
@@ -43,6 +44,8 @@ ms_append(Ms *a, void *item)
     return 1;
 }
 
+// NOTE: delete replace last elem with index i elem
+// NOTE: lazy delete overwrite, not free memory
 static int
 ms_delete(Ms *a, size_t i)
 {
@@ -91,6 +94,7 @@ ms_contains(Ms *a, void *item)
     return 0;
 }
 
+// NOTE: sequential take last elem from ms and delete it
 void *
 ms_take(Ms *a)
 {
