@@ -147,6 +147,7 @@ make_inet_socket(char *host, char *port)
     return fd;
 }
 
+// NOTE: create tcp socket and bind
 static int
 make_unix_socket(char *path)
 {

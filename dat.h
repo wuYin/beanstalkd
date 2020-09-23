@@ -230,10 +230,10 @@ struct Job {
 
     // bookkeeping fields; these are in-memory only
     char pad[6];
-    Tube *tube;
+    Tube *tube; // NOTE: nearest job -> it's tube
     Job *prev, *next;           // linked list of jobs // NOTE: using for buried queue
     Job *ht_next;               // Next job in a hash table list // NOTE: using for tube heap linked list
-    size_t heap_index;          // where is this job in its current heap
+    size_t heap_index;          // where is this job in its current heap // NOTE: index of it's tube heap
     File *file;
     Job  *fnext;
     Job  *fprev;

@@ -13,6 +13,7 @@ static int cur_conn_ct = 0, cur_worker_ct = 0, cur_producer_ct = 0;
 static uint tot_conn_ct = 0;
 int verbose = 0;
 
+// NOTE: new client watched tube t, incr it's ref count
 static void
 on_watch(Ms *a, Tube *t, size_t i)
 {
@@ -22,6 +23,7 @@ on_watch(Ms *a, Tube *t, size_t i)
     t->watching_ct++;
 }
 
+// NOTE: opposite, ignore will decr it's ref count
 static void
 on_ignore(Ms *a, Tube *t, size_t i)
 {
@@ -31,6 +33,7 @@ on_ignore(Ms *a, Tube *t, size_t i)
     tube_dref(t);
 }
 
+// NOTE: create conn with init state, default using tube and watching tubes
 Conn *
 make_conn(int fd, char start_state, Tube *use, Tube *watch)
 {
@@ -47,6 +50,7 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
         return NULL;
     }
 
+    // NOTE: update current using tube
     TUBE_ASSIGN(c->use, use);
     use->using_ct++;
 
@@ -218,6 +222,7 @@ conn_ready(Conn *c)
 }
 
 
+// NOTE: compare Conn with tickat
 int
 conn_less(void *ca, void *cb)
 {

@@ -41,6 +41,7 @@ srvserve(Server *s)
 {
     Socket *sock;
 
+    // NOTE: create epoll fd
     if (sockinit() == -1) {
         twarnx("sockinit");
         exit(1);
@@ -51,6 +52,7 @@ srvserve(Server *s)
     s->conns.less = conn_less;
     s->conns.setpos = conn_setpos;
 
+    // NOTE: register events to epoll
     if (sockwant(&s->sock, 'r') == -1) {
         twarn("sockwant");
         exit(2);
@@ -73,6 +75,7 @@ srvserve(Server *s)
 }
 
 
+// NOTE: handle client connection
 void
 srvaccept(Server *s, int ev)
 {

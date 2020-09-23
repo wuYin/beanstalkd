@@ -28,6 +28,7 @@ sockinit(void)
 }
 
 
+// NOTE: register specific events with epfd
 int
 sockwant(Socket *s, int rw)
 {

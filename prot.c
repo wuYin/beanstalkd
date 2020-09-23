@@ -99,6 +99,7 @@ size_t job_data_size_limit = JOB_DATA_SIZE_LIMIT_DEFAULT;
 #define MSG_JOB_TOO_BIG "JOB_TOO_BIG\r\n"
 
 // Connection can be in one of these states:
+// NOTE: server set to a conn came from client
 #define STATE_WANT_COMMAND  0  // conn expects a command from the client
 #define STATE_WANT_DATA     1  // conn expects a job data
 #define STATE_SEND_JOB      2  // conn sends job to the client
@@ -481,6 +482,7 @@ process_queue()
 
 // soonest_delayed_job returns the delayed job
 // with the smallest deadline_at among all tubes.
+// NOTE: traverse all tubes' all jobs, find nearest delayed job
 static Job *
 soonest_delayed_job()
 {
@@ -510,12 +512,14 @@ enqueue_job(Server *s, Job *j, int64 delay, char update_store)
 
     j->reserver = NULL;
     if (delay) {
+        // NOTE: 1. if delayed, move to delay heap
         j->r.deadline_at = nanoseconds() + delay;
         r = heapinsert(&j->tube->delay, j);
         if (!r)
             return 0;
         j->r.state = Delayed;
     } else {
+        // NOTE: 2. if not delay, move to ready heap
         r = heapinsert(&j->tube->ready, j);
         if (!r)
             return 0;
@@ -2125,7 +2129,10 @@ h_conn(const int fd, const short which, Conn *c)
         c->halfclosed = 1;
     }
 
+    // NOTE: 1. core, switch conn state, and read specific CMD from conn
     conn_process_io(c);
+
+    // NOTE: 2. core, exec cmds
     while (cmd_data_ready(c) && (c->cmd_len = scan_line_end(c->cmd, c->cmd_read))) {
         dispatch_cmd(c);
         fill_extra_data(c);
@@ -2137,6 +2144,7 @@ h_conn(const int fd, const short which, Conn *c)
     epollq_apply();
 }
 
+// NOTE: handle event ev happened in c
 static void
 prothandle(Conn *c, int ev)
 {
@@ -2203,6 +2211,7 @@ prottick(Server *s)
     return period;
 }
 
+// NOTE: accept connection, wrap default tube into it, register READ event
 void
 h_accept(const int fd, const short which, Server *s)
 {
@@ -2242,6 +2251,7 @@ h_accept(const int fd, const short which, Server *s)
         return;
     }
 
+    // NOTE: create conn with default tube
     Conn *c = make_conn(cfd, STATE_WANT_COMMAND, default_tube, default_tube);
     if (!c) {
         twarnx("make_conn() failed");
@@ -2254,10 +2264,10 @@ h_accept(const int fd, const short which, Server *s)
     }
     c->srv = s;
     c->sock.x = c;
-    c->sock.f = (Handle)prothandle;
+    c->sock.f = (Handle)prothandle; // NOTE: protocol handler
     c->sock.fd = cfd;
 
-    r = sockwant(&c->sock, 'r');
+    r = sockwant(&c->sock, 'r'); // NOTE: register READ event
     if (r == -1) {
         twarn("sockwant");
         close(cfd);
