@@ -39,7 +39,7 @@ Client 使用 put 命令创建一个工作任务 job. 在整个生命周期中 j
 | `ready`             | 等待被取出并处理 |
 | `reserved`          | 如果 job 被 worker 取出，将被此 worker 预订，worker 将执行此 job |
 | `delayed`           | 等待特定时间之后，状态再迁移为 `ready` 状态 |
-| `buried`            | 等待唤醒，通常在 job 处理失败时进入该状态
+| `buried`            | 等待唤醒，通常在 job 处理失败时进入该状态 |
 
 #### job 典型的生命周期
 

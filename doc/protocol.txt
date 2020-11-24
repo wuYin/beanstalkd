@@ -1,8 +1,14 @@
 = Beanstalk Protocol =
 
-Protocol
---------
+#
+# I. Protocol
+#
+---------------------------------------------------------------------------------
 
+# protocol: ASCII text over TCP
+# client --connect---cmd2--cmd1--> server
+#       <--resp1---resp2---process--
+# number: decimal, positive (negative indicated)
 The beanstalk protocol runs over TCP using ASCII encoding. Clients connect,
 send commands and data, wait for responses, and close the connection. For each
 connection, the server processes commands serially in the order in which they
@@ -10,6 +16,9 @@ were received and sends responses in the same order. All integers in the
 protocol are formatted in decimal and (unless otherwise indicated)
 nonnegative.
 
+# name: `A-Z a-z 0-9 - + / ; . % _ ( )`
+# prefix: not `-`
+# end: ' ' or '\r\n'
 Names, in this protocol, are ASCII strings. They may contain letters (A-Z and
 a-z), numerals (0-9), hyphen ("-"), plus ("+"), slash ("/"), semicolon (";"),
 dot ("."), dollar-sign ("$"), underscore ("_"), and parentheses ("(" and ")"),
@@ -17,6 +26,9 @@ but they may not begin with a hyphen. They are terminated by white space
 (either a space char or end of line). Each name must be at least one character
 long.
 
+# protocol package
+# 1. cmd text line: req or resp
+# 2. data chunks: job body or stats, opaque bytes, intact for delivery
 The protocol contains two kinds of data: text lines and unstructured chunks of
 data. Text lines are used for client commands and server responses. Chunks are
 used to transfer job bodies and stats information. Each job body is an opaque
@@ -24,12 +36,17 @@ sequence of bytes. The server never inspects or modifies a job body and always
 sends it back in its original form. It is up to the clients to agree on a
 meaningful interpretation of job bodies.
 
+# connection
+# client --`quit`/broken--> server
+# open conn, save to reuse
 The client may issue the "quit" command, or simply close the TCP connection
 when it no longer has use for the server. However, beanstalkd performs very
 well with a large number of open connections, so it is usually better for the
 client to keep its connection open and reuse it as much as possible. This also
 avoids the overhead of establishing new TCP connections.
 
+# error response
+# client --bad_form_req/unknown_cmd --> server
 If a client violates the protocol (such as by sending a request that is not
 well-formed or a command that does not exist) or if the server has an error,
 the server will reply with one of the following error messages:
@@ -42,11 +59,15 @@ the server will reply with one of the following error messages:
    http://groups.google.com/group/beanstalk-talk.
 
  - "BAD_FORMAT\r\n" The client sent a command line that was not well-formed.
-   This can happen if the line's length exceeds 224 bytes including \r\n,
-   if the name of a tube exceeds 200 bytes, if non-numeric
-   characters occur where an integer is expected, if the wrong number of
-   arguments are present, or if the command line is mal-formed in any other
-   way.
+   This can happen:
+   # 1. length limit
+   if the line's length exceeds 224 bytes including \r\n
+   if the name of a tube exceeds 200 bytes
+   # 2. numeric parse failed
+   if non-numeric characters occur where an integer is expected
+   # 3. bad parameters
+   if the wrong number of arguments are present
+   if the command line is mal-formed in any other way.
 
  - "UNKNOWN_COMMAND\r\n" The client sent a command that the server does not
    know.
@@ -60,8 +81,10 @@ As a last resort, if the server has a serious error that prevents it from
 continuing service to the current client, the server will close the
 connection.
 
-Job Lifecycle
--------------
+#
+# II. Job Lifecycle
+#
+---------------------------------------------------------------------------------
 
 A job in beanstalk gets created by a client with the "put" command. During its
 life it can be in one of four states: "ready", "reserved", "delayed", or
@@ -81,28 +104,50 @@ Here is a picture of the typical job lifecycle:
 
 Here is a picture with more possibilities:
 
-
-
-   put with delay               release with delay
+ 3.put with delay              6.release with delay
   ----------------> [DELAYED] <------------.
                         |                   |
                         | (time passes)     |
                         |                   |
-   put                  v     reserve       |       delete
+ 1.put                  v   2.reserve       |      4.delete
   -----------------> [READY] ---------> [RESERVED] --------> *poof*
                        ^  ^                |  |
-                       |   \  release      |  |
+                       |   \ 5.release     |  |
                        |    `-------------'   |
                        |                      |
-                       | kick                 |
+                       | 8.kick               |
                        |                      |
-                       |       bury           |
+                       |      7.bury          |
                     [BURIED] <---------------'
                        |
-                       |  delete
+                       |  4.delete
                         `--------> *poof*
 
+# corresponding to pulsar
+ 3.ProduceDelay              6. ReconsumeLater
+  ----------------> [DELAYED] <------------.
+                        |                   |
+                        | (time passes)     |
+                        |                   |
+ 1.Produce              v   2.[reserve]     |      4.Receive
+  -----------------> [READY] ---------> [RESERVED] --------> *poof*
+                       ^  ^                |  |
+                       |   \ 5.Nack        |  |
+                       |    `-------------'   |
+                       |                      |
+                       | 8.Nack               |
+                       |                      |
+                       |      7.ACK           |
+                    [BURIED] <---------------'
+                       |
+                       |  4.[delete]
+                        `--------> *poof*
 
+# tube: ready queue, delay queue
+# each job only in one queue
+#          <--ignore-- tube01
+# consumer --watch-->  tube02 - watch_list --reserve--> consumer
+#          --watch-->  tube03 /
 The system has one or more tubes. Each tube consists of a ready queue and a
 delay queue. Each job spends its entire life in one tube. Consumers can show
 interest in tubes by sending the "watch" command; they can show disinterest by
@@ -110,17 +155,22 @@ sending the "ignore" command. This set of interesting tubes is said to be a
 consumer's "watch list". When a client reserves a job, it may come from any of
 the tubes in its watch list.
 
+# "default" tube
 When a client connects, its watch list is initially just the tube named
 "default". If it submits jobs without having sent a "use" command, they will
 live in the tube named "default".
 
+# tube lifecycle
 Tubes are created on demand whenever they are referenced. If a tube is empty
 (that is, it contains no ready, delayed, or buried jobs) and no client refers
 to it, it will be deleted.
 
-Producer Commands
------------------
+#
+# III. Producer Commands
+#
+---------------------------------------------------------------------------------
 
+# 1. put cmd
 The "put" command is for any process that wants to insert a job into the queue.
 It comprises a command line followed by the job body:
 
@@ -129,28 +179,29 @@ It comprises a command line followed by the job body:
 
 It inserts a job into the client's currently used tube (see the "use" command
 below).
-
+ # 1.1 smaller priority means more urgent.
  - <pri> is an integer < 2**32. Jobs with smaller priority values will be
    scheduled before jobs with larger priorities. The most urgent priority is 0;
    the least urgent priority is 4,294,967,295.
-
+ # 1.2 job "delayed" --seconds--> "ready"
  - <delay> is an integer number of seconds to wait before putting the job in
    the ready queue. The job will be in the "delayed" state during this time.
    Maximum delay is 2**32-1.
-
+ # 1.3 timeout of worker run a job, after ttr server auto release
  - <ttr> -- time to run -- is an integer number of seconds to allow a worker
    to run this job. This time is counted from the moment a worker reserves
    this job. If the worker does not delete, release, or bury the job within
    <ttr> seconds, the job will time out and the server will release the job.
    The minimum ttr is 1. If the client sends 0, the server will silently
    increase the ttr to 1. Maximum ttr is 2**32-1.
-
+ # 1.4 length bytes of job body without \r\n
  - <bytes> is an integer indicating the size of the job body, not including the
    trailing "\r\n". This value must be less than max-job-size (default: 2**16).
-
+ # 1.5 raw bytes job body
  - <data> is the job body -- a sequence of bytes of length <bytes> from the
    previous line.
 
+# 2 ok resp, 2 bad request resp, 1 server drain resp
 After sending the command line and body, the client waits for a reply, which
 may be:
 
@@ -175,6 +226,7 @@ may be:
    disconnect and try again later. To put the server in drain mode, send the
    SIGUSR1 signal to the process.
 
+# 2. use cmd
 The "use" command is for producers. Subsequent put commands will put jobs into
 the tube specified by this command. If no use command has been issued, jobs
 will be put into the tube named "default".
@@ -190,9 +242,12 @@ The only reply is:
 
  - <tube> is the name of the tube now being used.
 
-Worker Commands
----------------
+#
+# IV. Worker Commands
+#
+---------------------------------------------------------------------------------
 
+# 1. reserve / reserve-with-timeout
 A process that wants to consume jobs from the queue uses "reserve", "delete",
 "release", and "bury". The first worker command, "reserve", looks like this:
 
@@ -202,6 +257,9 @@ Alternatively, you can specify a timeout as follows:
 
     reserve-with-timeout <seconds>\r\n
 
+# server may blocked wait for new job, send to consumer client.
+# limit TTR run timeout, job will be released into ready queue.
+# `stats-job` shows TTR and left time.
 This will return a newly-reserved job. If no job is available to be reserved,
 beanstalkd will wait to send a response until one becomes available. Once a
 job is reserved for the client, the client has limited time to run (TTR) the
@@ -209,15 +267,21 @@ job before the job times out. When the job times out, the server will put the
 job back into the ready queue. Both the TTR and the actual time left can be
 found in response to the stats-job command.
 
+# reserve send: smaller priority > early received
 If more than one job is ready, beanstalkd will choose the one with the
 smallest priority value. Within each priority, it will choose the one that
 was received first.
 
+# timeout 0 via no block reserve: job resp or TIMED_OUT
 A timeout value of 0 will cause the server to immediately return either a
 response or TIMED_OUT.  A positive value of timeout will limit the amount of
 time the client will block on the reserve request until a job becomes
 available.
 
+# timeout resp:
+# last 1s in TTR is server safe-margin
+# during this, client couldn't send reserve, # TODO: or waiting reserve
+# DEADLINE_SOON: notify client TTR reach end, delete or release the job.
 During the TTR of a reserved job, the last second is kept by the server as a
 safety margin, during which the client will not be made to wait for another
 job. If the client issues a reserve command during the safety margin, or if
@@ -235,6 +299,7 @@ If a non-negative timeout was specified and the timeout exceeded before a job
 became available, or if the client's connection is half-closed, the server
 will respond with TIMED_OUT.
 
+# ok resp
 Otherwise, the only other response to this command is a successful reservation
 in the form of a text line followed by the job body:
 
@@ -251,6 +316,7 @@ in the form of a text line followed by the job body:
    previous line. This is a verbatim copy of the bytes that were originally
    sent to the server in the put command for this job.
 
+# TODO: 2. reserve-job
 A job can be reserved by its id. Once a job is reserved for the client,
 the client has limited time to run (TTR) the job before the job times out.
 When the job times out, the server will put the job back into the ready queue.
@@ -268,6 +334,7 @@ This should immediately return one of these responses:
 - "RESERVED <id> <bytes>\r\n<data>\r\n". See the description for
   the reserve command.
 
+# 3. delete any job
 The delete command removes a job from the server entirely. It is normally used
 by the client when the job has successfully run to completion. A client can
 delete jobs that it has reserved, ready jobs, delayed jobs, and jobs that are
@@ -280,11 +347,13 @@ buried. The delete command looks like this:
 The client then waits for one line of response, which may be:
 
  - "DELETED\r\n" to indicate success.
-
+ # TTR reached, job put back to ready, send delete will be NOT_FOUND
  - "NOT_FOUND\r\n" if the job does not exist or is not either reserved by the
+   # TODO: job already reserved by other client ?
    client, ready, or buried. This could happen if the job timed out before the
    client sent the delete command.
 
+# 4. release: put reserved job into ready queue, optinal reset priority and delay.
 The release command puts a reserved job back into the ready queue (and marks
 its state as "ready") to be run by any client. It is normally used when the job
 fails because of a transitory error. It looks like this:
@@ -307,6 +376,7 @@ The client expects one line of response, which may be:
 
  - "NOT_FOUND\r\n" if the job does not exist or is not reserved by the client.
 
+# 5. bury:
 The bury command puts a job into the "buried" state. Buried jobs are put into a
 FIFO linked list and will not be touched by the server again until a client
 kicks them with the "kick" command.
@@ -325,6 +395,7 @@ There are two possible responses:
 
  - "NOT_FOUND\r\n" if the job does not exist or is not reserved by the client.
 
+# 6. touch: prolong and refresh ttr for reserved job, such as client received `DEADLINE_SOON`
 The "touch" command allows a worker to request more time to work on a job.
 This is useful for jobs that potentially take a long time, but you still want
 the benefits of a TTR pulling a job away from an unresponsive worker.  A worker
@@ -344,6 +415,7 @@ There are two possible responses:
 
  - "NOT_FOUND\r\n" if the job does not exist or is not reserved by the client.
 
+# 7. watch: subscribe a new named tube
 The "watch" command adds the named tube to the watch list for the current
 connection. A reserve command will take a job from any of the tubes in the
 watch list. For each new connection, the watch list initially consists of one
@@ -360,6 +432,7 @@ The reply is:
 
  - <count> is the integer number of tubes currently in the watch list.
 
+# 8. ignore: unsubscribe a named tube for consumer client
 The "ignore" command is for consumers. It removes the named tube from the
 watch list for the current connection.
 
@@ -370,13 +443,16 @@ The reply is one of:
  - "WATCHING <count>\r\n" to indicate success.
 
    - <count> is the integer number of tubes currently in the watch list.
-
+ # TODO: means can't unsubscribe only tube?
  - "NOT_IGNORED\r\n" if the client attempts to ignore the only tube in its
    watch list.
 
-Other Commands
+#
+# V. Other Commands
+#
 --------------
 
+# 1. peek: inspect a specific job or next state job
 The peek commands let the client inspect a job in the system. There are four
 variations. All but the first operate only on the currently used tube.
 
@@ -406,6 +482,7 @@ Or a line followed by a chunk of data, if the command was successful:
  - <data> is the job body -- a sequence of bytes of length <bytes> from the
    previous line.
 
+# 2. kick
 The kick command applies only to the currently used tube. It moves jobs into
 the ready queue. If there are any buried jobs, it will only kick buried jobs.
 Otherwise it will kick delayed jobs. It looks like:
