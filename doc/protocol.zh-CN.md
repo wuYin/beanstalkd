@@ -334,7 +334,7 @@ peek-buried\r\n 返回下一个在 buried 列表中的 job
 
 ```text
 NOT_FOUND\r\n
-``` 
+```
 
 * 如果 job 不存在，或者没有对应状态的 job
 

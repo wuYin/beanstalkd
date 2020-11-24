@@ -483,6 +483,7 @@ Or a line followed by a chunk of data, if the command was successful:
    previous line.
 
 # 2. kick
+# cur use tube: [[delay jobs], buried jobs] --kick--> ready queue
 The kick command applies only to the currently used tube. It moves jobs into
 the ready queue. If there are any buried jobs, it will only kick buried jobs.
 Otherwise it will kick delayed jobs. It looks like:
@@ -498,6 +499,7 @@ The response is of the form:
 
  - <count> is an integer indicating the number of jobs actually kicked.
 
+# 3. kick-job: kick a specific buried or delay job
 The kick-job command is a variant of kick that operates with a single job
 identified by its job id. If the given job id exists and is in a buried or
 delayed state, it will be moved to the ready queue of the the same tube where it
@@ -514,6 +516,11 @@ The response is one of:
 
  - "KICKED\r\n" when the operation succeeded.
 
+
+#
+# VI. Stats Command
+#
+1. stats-job: statistic of a specific id job with yaml format
 The stats-job command gives statistical information about the specified job if
 it exists. Its form is:
 
@@ -551,6 +558,8 @@ keys to scalar values. It contains these keys:
  - "ttr" -- time to run -- is the integer number of seconds a worker is
    allowed to run this job.
 
+ # delayed --delay-time --> ready
+ # reserved --ttr-timeout /
  - "time-left" is the number of seconds left until the server puts this job
    into the ready queue. This number is only meaningful if the job is
    reserved or delayed. If the job is reserved and this amount of time
@@ -571,6 +580,7 @@ keys to scalar values. It contains these keys:
 
  - "kicks" is the number of times this job has been kicked.
 
+# stats-tube: statistic of specific named tube with yaml format
 The stats-tube command gives statistical information about the specified tube
 if it exists. Its form is:
 
@@ -612,6 +622,7 @@ keys to scalar values. It contains these keys:
  - "current-using" is the number of open connections that are currently
    using this tube.
 
+ # waiting for ttr conns
  - "current-waiting" is the number of open connections that have issued a
    reserve command while watching this tube but not yet received a response.
 
@@ -627,6 +638,7 @@ keys to scalar values. It contains these keys:
 
  - "pause-time-left" is the number of seconds until the tube is un-paused.
 
+# 3. stats: statistic of beanstalkd server
 The stats command gives statistical information about the system as a whole.
 Its form is:
 
@@ -758,6 +770,7 @@ they are not stored on disk with the -b flag.
 
  - "platform" is the machine architecture as determined by uname
 
+# 4.1 list-tubes
 The list-tubes command returns a list of all existing tubes. Its form is:
 
     list-tubes\r\n
@@ -772,6 +785,7 @@ The response is:
  - <data> is a sequence of bytes of length <bytes> from the previous line. It
    is a YAML file containing all tube names as a list of strings.
 
+# 4.2 list-tube-used
 The list-tube-used command returns the tube currently being used by the
 client. Its form is:
 
@@ -783,6 +797,7 @@ The response is:
 
  - <tube> is the name of the tube being used.
 
+# 4.3 list-tubes-watched
 The list-tubes-watched command returns a list tubes currently being watched by
 the client. Its form is:
 
@@ -798,10 +813,12 @@ The response is:
  - <data> is a sequence of bytes of length <bytes> from the previous line. It
    is a YAML file containing watched tube names as a list of strings.
 
+5. quit
 The quit command simply closes the connection. Its form is:
 
     quit\r\n
 
+# 6. pause-tube: proactive delay job for specific tube
 The pause-tube command can delay any new job being reserved for a given time. Its form is:
 
     pause-tube <tube-name> <delay>\r\n

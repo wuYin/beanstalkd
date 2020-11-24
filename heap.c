@@ -4,6 +4,7 @@
 #include <string.h>
 
 
+// NOTE: insert value x by data index k
 static void
 set(Heap *h, size_t k, void *x)
 {
@@ -12,6 +13,7 @@ set(Heap *h, size_t k, void *x)
 }
 
 
+// NOTE: swap 2 different values with index keys
 static void
 swap(Heap *h, size_t a, size_t b)
 {
@@ -61,6 +63,7 @@ siftup(Heap *h, size_t k)
         if (l < h->len && less(h, l, s)) s = l;
         if (r < h->len && less(h, r, s)) s = r;
 
+        // NOTE: current node k is leaf in min heap, no need go farther
         if (s == k) {
             return; /* satisfies the heap property */
         }
@@ -73,10 +76,10 @@ siftup(Heap *h, size_t k)
 
 // Heapinsert inserts x into heap h according to h->less.
 // It returns 1 on success, otherwise 0.
-// NOTE: insert x into h, grow memory*2 if len reached cap
 int
 heapinsert(Heap *h, void *x)
 {
+    // NOTE: if length of heap reach the capacity, scale up memory*2
     if (h->len == h->cap) {
         void **ndata;
         size_t ncap = (h->len+1) * 2; /* allocate twice what we need */
@@ -109,8 +112,8 @@ heapremove(Heap *h, size_t k)
 
     void *x = h->data[k];
     h->len--;
-    set(h, k, h->data[h->len]);
-    siftdown(h, k);
+    set(h, k, h->data[h->len]); // NOTE: replace index k element with last element
+    siftdown(h, k); // NOTE: bubble and sink to find most suitable index for original last element
     siftup(h, k);
     return x;
 }

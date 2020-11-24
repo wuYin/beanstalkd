@@ -99,10 +99,12 @@ typedef int(*less_fn)(void*, void*);
 
 // setpos_fn is used by the binary heap to record the new positions of elements
 // whenever they get moved or inserted.
+// NOTE: calculate new pos for new value
 typedef void(*setpos_fn)(void*, size_t);
 
 struct Heap {
     size_t  cap;                // capacity of the heap
+    // NOTE: data index start from 0, so len also next index for new element
     size_t  len;                // amount of elements in the heap
     void    **data;             // actual elements
 
