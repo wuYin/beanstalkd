@@ -9,7 +9,7 @@ typedef uint32_t      uint32;
 typedef int64_t       int64;
 typedef uint64_t      uint64;
 
-typedef struct Ms     Ms;
+typedef struct Ms     Ms; // NOTE: multi set
 typedef struct Job    Job;
 typedef struct Tube   Tube;
 typedef struct Conn   Conn;
@@ -214,7 +214,7 @@ struct Jobrec {
 
     // deadline_at is a timestamp, in nsec, that points to:
     // * time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
-    // * time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> released
+    // * time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> ready
     // * undefined otherwise.
     int64  deadline_at;
 
@@ -232,7 +232,7 @@ struct Job {
 
     // bookkeeping fields; these are in-memory only
     char pad[6];
-    Tube *tube; // NOTE: nearest job -> it's tube
+    Tube *tube;                 // NOTE: tube which job belong to
     Job *prev, *next;           // linked list of jobs // NOTE: using for buried queue
     Job *ht_next;               // Next job in a hash table list // NOTE: using for tube heap linked list
     size_t heap_index;          // where is this job in its current heap // NOTE: index of it's tube heap
@@ -247,22 +247,20 @@ struct Job {
 };
 
 struct Tube {
-    uint refs; // NOTE: reference count
+    uint refs;                  // NOTE: reference count
     char name[MAX_TUBE_NAME_LEN];
-    Heap ready; // NOTE: not-ready jobs sorted by priority
-    Heap delay; // NOTE: not-delay jobs sorted by duration
+    Heap ready;                 // NOTE: ready jobs sorted by priority
+    Heap delay;                 // NOTE: delay jobs sorted by duration
     Ms waiting_conns;           // conns waiting for the job at this moment
+
+    Job buried;                 // linked list header
+
     struct stats stat;
     uint using_ct;
     uint watching_ct;
 
-    // pause is set to the duration of the current pause, otherwise 0, in nsec.
-    int64 pause;
-
-    // unpause_at is a timestamp when to unpause the tube, in nsec.
-    int64 unpause_at;
-
-    Job buried;                 // linked list header
+    int64 pause;      // pause is set to the duration of the current pause, otherwise 0, in nsec.
+    int64 unpause_at; // unpause_at is a timestamp when to unpause the tube, in nsec.
 };
 
 
@@ -500,7 +498,7 @@ struct Server {
     Socket sock;
 
     // Connections that must produce deadline or timeout, ordered by the time.
-    // NOTE: save ttr count down, reserve timeout, ...
+    // reserve TTR, reserve-timeout
     Heap   conns;
 };
 void srv_acquire_wal(Server *s);

@@ -24,7 +24,7 @@ grow(Ms *a)
     if (!nitems)
         return 0;
 
-    memcpy(nitems, a->items, a->len * sizeof(void *));
+    memcpy(nitems, a->items, a->len * sizeof(void *)); // NOTE: copy and replace
     free(a->items);
     a->items = nitems;
     a->cap = ncap;
@@ -54,7 +54,7 @@ ms_delete(Ms *a, size_t i)
     if (i >= a->len)
         return 0;
     item = a->items[i];
-    a->items[i] = a->items[--a->len];
+    a->items[i] = a->items[--a->len]; // NOTE: lazy delete by replaced index i element with last element
 
     /* it has already been removed now */
     if (a->onremove)
@@ -62,6 +62,7 @@ ms_delete(Ms *a, size_t i)
     return 1;
 }
 
+// NOTE: delete all element and re-init
 void
 ms_clear(Ms *a)
 {
@@ -70,6 +71,7 @@ ms_clear(Ms *a)
     ms_init(a, a->oninsert, a->onremove);
 }
 
+// NOTE: find item and delete it
 int
 ms_remove(Ms *a, void *item)
 {
@@ -82,6 +84,7 @@ ms_remove(Ms *a, void *item)
     return 0;
 }
 
+// NOTE: traverse entire ms and compare, O(N)
 int
 ms_contains(Ms *a, void *item)
 {
@@ -94,7 +97,7 @@ ms_contains(Ms *a, void *item)
     return 0;
 }
 
-// NOTE: sequential take last elem from ms and delete it
+// NOTE: sequential take last accessed elem from ms and delete it
 void *
 ms_take(Ms *a)
 {
@@ -109,6 +112,6 @@ ms_take(Ms *a)
     a->last = a->last % a->len;
     item = a->items[a->last];
     ms_delete(a, a->last);
-    ++a->last;
+    ++a->last; // NOTE: incr last itself
     return item;
 }

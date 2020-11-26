@@ -3,9 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+// NOTE: tubes maintains all tubes created by cur beanstalkd
 struct Ms tubes;
 
-// NOTE: set ready/delay heap handlers, init buried linked list and waiting_conns queue
+// NOTE: truncate tube name
+// NOTE: set ready/delay heap less comparators
+// NOTE: init buried linked list and waiting_conns ms
 Tube *
 make_tube(const char *name)
 {
@@ -35,14 +38,14 @@ make_tube(const char *name)
 static void
 tube_free(Tube *t)
 {
-    ms_remove(&tubes, t); // NOTE: remove from global tube list
+    ms_remove(&tubes, t);
     free(t->ready.data);
     free(t->delay.data);
     ms_clear(&t->waiting_conns);
     free(t);
 }
 
-// NOTE: decrement ref count of tube t, delete it if nobody refer to it
+// NOTE: decr ref count of t, free it if ref is 0, like last client also ignore tube t
 void
 tube_dref(Tube *t)
 {
@@ -64,6 +67,7 @@ tube_iref(Tube *t)
     ++t->refs;
 }
 
+// NOTE: create tube and weak append into global tube list
 static Tube *
 make_and_insert_tube(const char *name)
 {
@@ -76,10 +80,9 @@ make_and_insert_tube(const char *name)
 
     /* We want this global tube list to behave like "weak" refs, so don't
      * increment the ref count. */
-    // NOTE: global tube list weak refer to the new tube, won't incr it ref count
     r = ms_append(&tubes, t);
     if (!r)
-        // NOTE: oom and register failed, delete new tube
+        // NOTE: oom and register failed, delete the new tube
         return tube_dref(t), (Tube *) 0;
 
     return t;

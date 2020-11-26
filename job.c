@@ -167,14 +167,14 @@ job_free(Job *j)
     free(j);
 }
 
-// NOTE: record index of current job in it's tube heap
+// NOTE: when job inserted to heap, save idx to job knows where is itself in heap
 void
 job_setpos(void *j, size_t pos)
 {
     ((Job *)j)->heap_index = pos;
 }
 
-// NOTE: compare priority of two jobs, using in tube ready heap
+// NOTE: job priority comparator for tube ready heap, smaller priority, smaller id
 int
 job_pri_less(void *ja, void *jb)
 {
@@ -185,7 +185,7 @@ job_pri_less(void *ja, void *jb)
     return a->r.id < b->r.id;
 }
 
-// NOTE: compare delay of 2 jobs, using in tube delay heap
+// NOTE: job delay comparator for tube delay heap, smaller delay, smaller id
 int
 job_delay_less(void *ja, void *jb)
 {
