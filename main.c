@@ -89,13 +89,13 @@ main(int argc, char **argv)
     progname = argv[0];
     setlinebuf(stdout);
 
-    // NOTE: 1. parse args
+    // 1. parse args
     optparse(&srv, argv+1);
     if (verbose) {
         printf("pid %d\n", getpid());
     }
 
-    // NOTE: 2. init server socket
+    // 2. create server socket, bind and listen
     int r = make_server_socket(srv.addr, srv.port);
     if (r == -1) {
         twarnx("make_server_socket()");
@@ -104,16 +104,16 @@ main(int argc, char **argv)
 
     srv.sock.fd = r;
 
+    // 3. init global tube list, create `default` tube
     prot_init();
 
     if (srv.user)
         su(srv.user);
     set_sig_handlers();
 
-    // NOTE: 3. recover from WAL
     srv_acquire_wal(&srv);
 
-    // NOTE: 4. serve requests
+    // 4. start server and do event loop
     srvserve(&srv);
     exit(0);
 }

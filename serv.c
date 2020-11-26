@@ -39,35 +39,37 @@ void srv_acquire_wal(Server *s) {
 void
 srvserve(Server *s)
 {
-    Socket *sock;
-
-    // NOTE: create epoll fd
+    // 1. create epoll fd
     if (sockinit() == -1) {
         twarnx("sockinit");
         exit(1);
     }
 
+    // 2. socket s prepare to accept conn
     s->sock.x = s;
     s->sock.f = (Handle)srvaccept;
     s->conns.less = conn_less;
     s->conns.setpos = conn_setpos;
 
-    // NOTE: register events to epoll
     if (sockwant(&s->sock, 'r') == -1) {
         twarn("sockwant");
         exit(2);
     }
 
-
+    // 4. block event loop
+    Socket *sock; // sock -> *Socket -> Socket
     for (;;) {
+        // 4.1 calculate next epoll timeout
         int64 period = prottick(s);
 
+        // 4.2 try to wait events happened in sock
         int rw = socknext(&sock, period);
         if (rw == -1) {
             twarnx("socknext");
             exit(1);
         }
 
+        // 4.3 handle event
         if (rw) {
             sock->f(sock->x, rw);
         }

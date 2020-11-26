@@ -19,7 +19,7 @@ static void rehash(int);
 static int
 _get_job_hash_index(uint64 job_id)
 {
-    return job_id % all_jobs_cap; // NOTE: mod hash
+    return job_id % all_jobs_cap;
 }
 
 static void
@@ -29,7 +29,7 @@ store_job(Job *j)
 
     index = _get_job_hash_index(j->r.id);
 
-    j->ht_next = all_jobs[index]; // NOTE: fresh job put as head of linked list
+    j->ht_next = all_jobs[index]; // NOTE: store j as new head of idx linked list
     all_jobs[index] = j;
     all_jobs_used++;
 
@@ -111,6 +111,7 @@ allocate_job(int body_size)
     return j;
 }
 
+// create job with fields, store into all_jobs
 Job *
 make_job_with_id(uint32 pri, int64 delay, int64 ttr,
                  int body_size, Tube *tube, uint64 id)

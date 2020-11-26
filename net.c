@@ -33,6 +33,7 @@ set_nonblocking(int fd)
     return 0;
 }
 
+// NOTE: create server socket fd, bind and listen
 static int
 make_inet_socket(char *host, char *port)
 {

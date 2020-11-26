@@ -68,7 +68,7 @@ typedef int(FAlloc)(int, int);
 #define DEFAULT_FSYNC_MS 50
 
 // Use this macro to designate unused parameters in functions.
-// NOTE: convert x to void, pass unused var check
+// NOTE: convert x to void, to pass unused var check
 #define UNUSED_PARAMETER(x) (void)(x)
 
 // version is defined in vers.c, see vers.sh for details.
@@ -115,6 +115,7 @@ int   heapinsert(Heap *h, void *x);
 void* heapremove(Heap *h, size_t k);
 
 
+// Socket attached into epoll event.data.ptr
 struct Socket {
     // Descriptor for the socket.
     int    fd;
@@ -125,7 +126,7 @@ struct Socket {
     // x is passed as first parameter to f.
     void   *x;
 
-    // added value is platform dependend: on OSX it can be > 1.
+    // added value is platform depended: on OSX it can be > 1.
     // Value of 1 - socket was already added to event notifications,
     // otherwise it is 0.
     int    added;
@@ -213,8 +214,8 @@ struct Jobrec {
     int64  created_at;
 
     // deadline_at is a timestamp, in nsec, that points to:
-    // * time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
-    // * time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> ready
+    // * 1. time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
+    // * 2. time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> ready
     // * undefined otherwise.
     int64  deadline_at;
 
@@ -331,7 +332,8 @@ void  tube_dref(Tube *t);
 void  tube_iref(Tube *t);
 Tube *tube_find(const char *name);
 Tube *tube_find_or_make(const char *name);
-// NOTE: assign tube b to tube a
+
+// NOTE: assign tube b to tube a, decr ref for b, incr ref for a
 #define TUBE_ASSIGN(a,b) (tube_dref(a), (a) = (b), tube_iref(a))
 
 
@@ -396,8 +398,8 @@ struct Conn {
 
     // NOTE: response buffer
     char *reply;
-    int  reply_len;
     int  reply_sent;
+    int  reply_len;
     char reply_buf[LINE_BUF_SIZE]; // this string IS NUL-terminated
 
     // How many bytes of in_job->body have been read so far. If in_job is NULL
@@ -405,8 +407,8 @@ struct Conn {
     // in_job_read's meaning is inverted -- then it counts the bytes that
     // remain to be thrown away.
     // NOTE: reading job
-    int64 in_job_read;
     Job   *in_job;              // a job to be read from the client
+    int64 in_job_read;          // how many bytes in this job have been read so far
 
     // NOTE: writing job
     Job *out_job;               // a job to be sent to the client
@@ -498,7 +500,7 @@ struct Server {
     Socket sock;
 
     // Connections that must produce deadline or timeout, ordered by the time.
-    // reserve TTR, reserve-timeout
+    // NOTE: count down TTR, count down timeout
     Heap   conns;
 };
 void srv_acquire_wal(Server *s);

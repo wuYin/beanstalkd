@@ -315,6 +315,7 @@ epollq_rmconn(Conn *c)
 
 // Propagate changes to event notification mechanism about expected operations
 // in connections' sockets. Clear the epollq list.
+// NOTE: traverse all dirty connections and register read, write event for it
 static void
 epollq_apply()
 {
@@ -338,6 +339,7 @@ epollq_apply()
 #define reply_serr(c, e) \
     (twarnx("server error: %s", (e)), reply_msg((c), (e)))
 
+// register write response to c into epoll_queue
 static void
 reply(Conn *c, char *line, int len, int state)
 {
@@ -482,7 +484,7 @@ process_queue()
 
 // soonest_delayed_job returns the delayed job
 // with the smallest deadline_at among all tubes.
-// NOTE: traverse all tubes' all jobs, find nearest delayed job
+// NOTE: traverse all tube delayed top job in heap, compare one by one to get soonest delayed end job
 static Job *
 soonest_delayed_job()
 {
@@ -512,14 +514,14 @@ enqueue_job(Server *s, Job *j, int64 delay, char update_store)
 
     j->reserver = NULL;
     if (delay) {
-        // NOTE: 1. if delayed, move to delay heap
+        // 1. if delay, insert to delay heap
         j->r.deadline_at = nanoseconds() + delay;
         r = heapinsert(&j->tube->delay, j);
         if (!r)
             return 0;
         j->r.state = Delayed;
     } else {
-        // NOTE: 2. if not delay, move to ready heap
+        // 2. if no delay, insert to ready heap
         r = heapinsert(&j->tube->ready, j);
         if (!r)
             return 0;
@@ -782,6 +784,7 @@ scan_line_end(const char *s, int size)
 static int
 which_cmd(Conn *c)
 {
+// define macro and compare cmd one by one use the macro
 #define TEST_CMD(s,c,o) if (strncmp((s), (c), CONSTSTRLEN(c)) == 0) return (o);
     TEST_CMD(c->cmd, CMD_PUT, OP_PUT);
     TEST_CMD(c->cmd, CMD_PEEKJOB, OP_PEEKJOB);
@@ -811,6 +814,8 @@ which_cmd(Conn *c)
     return OP_UNKNOWN;
 }
 
+// not ok: skip discard, bit bucket mode
+// ok: after put cmd, after dispatch
 /* Copy up to body_size trailing bytes into the job, then the rest into the cmd
  * buffer. If c->in_job exists, this assumes that c->in_job->body is empty.
  * This function is idempotent(). */
@@ -822,21 +827,25 @@ fill_extra_data(Conn *c)
     if (!c->cmd_len)
         return; /* we don't have a complete command */
 
-    /* how many extra bytes did we read? */
+    /* how many extra bytes in header did we forward read? */
     int64 extra_bytes = c->cmd_read - c->cmd_len;
 
     int64 job_data_bytes = 0;
     /* how many bytes should we put into the job body? */
     if (c->in_job) {
+        // 1. copy part of job data which in header tail into job body
         job_data_bytes = min(extra_bytes, c->in_job->r.body_size);
         memcpy(c->in_job->body, c->cmd + c->cmd_len, job_data_bytes);
         c->in_job_read = job_data_bytes;
     } else if (c->in_job_read) {
+        // 2. we already read part of job data because it's part of header
+        // now need reduce this part
         /* we are in bit-bucket mode, throwing away data */
         job_data_bytes = min(extra_bytes, c->in_job_read);
         c->in_job_read -= job_data_bytes;
     }
 
+    // 3. TODO: reset cmd_read to length which before
     /* how many bytes are left to go into the future cmd? */
     int64 cmd_bytes = extra_bytes - job_data_bytes;
     memmove(c->cmd, c->cmd + c->cmd_len + job_data_bytes, cmd_bytes);
@@ -846,13 +855,15 @@ fill_extra_data(Conn *c)
 
 #define skip(conn,n,msg) (_skip(conn, n, msg, CONSTSTRLEN(msg)))
 
+// skip n bytes in c, reply msg to client, like:
+// skip(c, (int64)body_size+2, JOB_TOO_BIG)
 static void
 _skip(Conn *c, int64 n, char *msg, int msglen)
 {
     /* Invert the meaning of in_job_read while throwing away data -- it
      * counts the bytes that remain to be thrown away. */
     c->in_job = 0;
-    c->in_job_read = n;
+    c->in_job_read = n; // now we need read and discard n bytes
     fill_extra_data(c);
 
     if (c->in_job_read == 0) {
@@ -866,6 +877,7 @@ _skip(Conn *c, int64 n, char *msg, int msglen)
     c->state = STATE_BITBUCKET;
 }
 
+// enqueue a complete job into delay heap or ready heap
 static void
 enqueue_incoming_job(Conn *c)
 {
@@ -1317,7 +1329,9 @@ dispatch_cmd(Conn *c)
     }
 
     switch (type) {
+    // 1. PUT
     case OP_PUT:
+        // 1.1 parse fields
         if (read_u32(&pri, c->cmd + 4, &delay_buf) ||
             read_duration(&delay, delay_buf, &ttr_buf) ||
             read_duration(&ttr, ttr_buf, &size_buf) ||
@@ -1327,6 +1341,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // 1.2 job data size > 60MB
         if (body_size > job_data_size_limit) {
             /* throw away the job body and respond with JOB_TOO_BIG */
             skip(c, (int64)body_size + 2, MSG_JOB_TOO_BIG);
@@ -1342,9 +1357,10 @@ dispatch_cmd(Conn *c)
         connsetproducer(c);
 
         if (ttr < 1000000000) {
-            ttr = 1000000000;
+            ttr = 1000000000; // default ttr is 1s
         }
 
+        // 1.3 create new job
         c->in_job = make_job(pri, delay, ttr, body_size + 2, c->use);
 
         /* OOM? */
@@ -1357,6 +1373,7 @@ dispatch_cmd(Conn *c)
 
         fill_extra_data(c);
 
+        // 1.4 if cur job read complete, enqueue it
         /* it's possible we already have a complete job */
         maybe_enqueue_incoming_job(c);
         return;
@@ -1930,6 +1947,7 @@ conn_want_command(Conn *c)
     c->state = STATE_WANT_COMMAND;
 }
 
+// read or write to conn and convert state
 static void
 conn_process_io(Conn *c)
 {
@@ -1938,7 +1956,11 @@ conn_process_io(Conn *c)
     Job *j;
     struct iovec iov[2];
 
-    switch (c->state) {
+  switch (c->state) {
+    // 1. expect a command read from client
+    // -> STATE_CLOSE: client closed conn
+    // -> STATE_WANT_ENDLINE: read non-complete cmd
+    // --> STATE_WANT_COMMAND: keep same state if read a complete cmd
     case STATE_WANT_COMMAND:
         r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
         if (r == -1) {
@@ -1953,6 +1975,7 @@ conn_process_io(Conn *c)
         c->cmd_read += r;
         c->cmd_len = scan_line_end(c->cmd, c->cmd_read);
         if (c->cmd_len) {
+            // 1.1 ok to dispatch the cmd
             // We found complete command line. Bail out to h_conn.
             return;
         }
@@ -1960,6 +1983,7 @@ conn_process_io(Conn *c)
         // c->cmd_read > LINE_BUF_SIZE can't happen
 
         if (c->cmd_read == LINE_BUF_SIZE) {
+            // 1.2 non-complete cmd, discard it and move to STATE_WANT_ENDLINE state
             // Command line too long.
             // Put connection into special state that discards
             // the command line until the end line is found.
@@ -1969,6 +1993,8 @@ conn_process_io(Conn *c)
         // We have an incomplete line, so just keep waiting.
         return;
 
+    // 2. conn readable again, reply BAD_FORMAT if finally reach end
+    // -> STATE_CLOSE: client closed conn
     case STATE_WANT_ENDLINE:
         r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
         if (r == -1) {
@@ -1997,6 +2023,10 @@ conn_process_io(Conn *c)
         }
         return;
 
+    // 3. OOM or msg too big such as c->in_job_read > 60MB, now we need SKIP current body
+    // -> STATE_CLOSE: client closed conn
+    // -> STATE_SEND_WORD: finally skipped ALL invalid bytes
+    // <--> STATE_BITBUCKET: not read all job body yet, may need to keep same state to proceeding read remain bytes
     case STATE_BITBUCKET: {
         /* Invert the meaning of in_job_read while throwing away data -- it
          * counts the bytes that remain to be thrown away. */
@@ -2021,6 +2051,10 @@ conn_process_io(Conn *c)
         }
         return;
     }
+
+    // 4. expect job body data
+    // -> STATE_CLOSE: client closed conn
+    // <--> STATE_WANT_DATA: not read all job body yet, may need to keep same state to proceeding read remain bytes
     case STATE_WANT_DATA:
         j = c->in_job;
 
@@ -2040,6 +2074,11 @@ conn_process_io(Conn *c)
 
         maybe_enqueue_incoming_job(c);
         return;
+
+    // 5. reply response msg
+    // -> STATE_CLOSE: client closed conn
+    // <--> STATE_SEND_WORD: not write all resp yet, may need to keep same state to proceeding write remain bytes
+    // -> STATE_WANT_COMMAND: reply done
     case STATE_SEND_WORD:
         r= write(c->sock.fd, c->reply + c->reply_sent, c->reply_len - c->reply_sent);
         if (r == -1) {
@@ -2062,6 +2101,11 @@ conn_process_io(Conn *c)
 
         /* otherwise we sent an incomplete reply, so just keep waiting */
         break;
+
+    // 6. reply job body data
+    // -> STATE_CLOSE: client closed conn
+    // <-> STATE_SEND_JOB: not write all job body yet, may need to keep same state to proceeding write remain bytes.
+    // -> STATE_WANT_COMMAND: job write done, try to receive new cmd
     case STATE_SEND_JOB:
         j = c->out_job;
 
@@ -2084,7 +2128,7 @@ conn_process_io(Conn *c)
         c->reply_sent += r;
         if (c->reply_sent >= c->reply_len) {
             c->out_job_sent += c->reply_sent - c->reply_len;
-            c->reply_sent = c->reply_len;
+            c->reply_sent = c->reply_len; // reply write done
         }
 
         /* (c->out_job_sent > j->r.body_size) can't happen */
@@ -2100,7 +2144,10 @@ conn_process_io(Conn *c)
 
         /* otherwise we sent incomplete data, so just keep waiting */
         break;
+
+    // 7. reserve waiting for new job
     case STATE_WAIT:
+        // if client close conn, remove it from waiting set
         if (c->halfclosed) {
             c->pending_timeout = -1;
             remove_waiting_conn(c);
@@ -2114,6 +2161,7 @@ conn_process_io(Conn *c)
 #define want_command(c) ((c)->sock.fd && ((c)->state == STATE_WANT_COMMAND))
 #define cmd_data_ready(c) (want_command(c) && (c)->cmd_read)
 
+// protocol handler for client socket, read cmd  and handle to response
 static void
 h_conn(const int fd, const short which, Conn *c)
 {
@@ -2124,16 +2172,18 @@ h_conn(const int fd, const short which, Conn *c)
         epollq_apply();
         return;
     }
-
+    // 1. client disconnected, tag it
     if (which == 'h') {
         c->halfclosed = 1;
     }
 
-    // NOTE: 1. core, switch conn state, and read specific CMD from conn
+    // 2. CORE: switch conn state and read cmd from it
     conn_process_io(c);
 
-    // NOTE: 2. core, exec cmds
+    // 3. CORE: dispatch cmd
+    // TODO: scan again may unnecessary // while (cmd_data_ready(c)) {
     while (cmd_data_ready(c) && (c->cmd_len = scan_line_end(c->cmd, c->cmd_read))) {
+        // if read a complete cmd, dispatch to corresponding cmd handler
         dispatch_cmd(c);
         fill_extra_data(c);
     }
@@ -2144,7 +2194,6 @@ h_conn(const int fd, const short which, Conn *c)
     epollq_apply();
 }
 
-// NOTE: handle event ev happened in c
 static void
 prothandle(Conn *c, int ev)
 {
@@ -2158,19 +2207,22 @@ prottick(Server *s)
     Job *j;
     int64 now;
     Tube *t;
-    int64 period = 0x34630B8A000LL; /* 1 hour in nanoseconds */
+    int64 period = 0x34630B8A000LL; /* 1 hour in nanoseconds */ // NOTE: min timeout is 1h
     int64 d;
 
     now = nanoseconds();
 
     // Enqueue all jobs that are no longer delayed.
     // Capture the smallest period from the soonest delayed job.
+    // 1. find soonest expired delay job from all tubes delay heap
     while ((j = soonest_delayed_job())) {
         d = j->r.deadline_at - now;
         if (d > 0) {
+            // 1.1 found soonest delayed, update period
             period = min(period, d);
             break;
         }
+        // 1.2 job j expired, remove from delay heap, then insert to ready heap
         heapremove(&j->tube->delay, j->heap_index);
         int r = enqueue_job(s, j, 0, 0);
         if (r < 1)
@@ -2179,45 +2231,52 @@ prottick(Server *s)
 
     // Unpause every possible tube and process the queue.
     // Capture the smallest period from the soonest pause deadline.
+    // 2. find soonest expired paused tube from all tubes
     size_t i;
     for (i = 0; i < tubes.len; i++) {
         t = tubes.items[i];
         d = t->unpause_at - now;
+        // 2.1 if pause expired, reset and process
         if (t->pause && d <= 0) {
             t->pause = 0;
             process_queue();
-        }
-        else if (d > 0) {
+        } else if (d > 0) {
+            // 2.2 update period
             period = min(period, d);
         }
     }
 
     // Process connections with pending timeouts. Release jobs with expired ttr.
     // Capture the smallest period from the soonest connection.
+    // 3. traverse all conns and find soonest expired TTR or timeout conn
     while (s->conns.len) {
         Conn *c = s->conns.data[0];
         d = c->tickat - now;
         if (d > 0) {
+            // 3.1 cutdown ttr
             period = min(period, d);
             break;
         }
+        // 3.2 conn timeout
         heapremove(&s->conns, 0);
         c->in_conns = 0;
         conn_timeout(c);
     }
 
+    // 4. register rw event for connections
     epollq_apply();
 
     return period;
 }
 
-// NOTE: accept connection, wrap default tube into it, register READ event
+// NOTE: when server socket is readable, handle socket fd with `which` event
 void
 h_accept(const int fd, const short which, Server *s)
 {
     UNUSED_PARAMETER(which);
     struct sockaddr_storage addr;
 
+    // 1. accept client socket fd
     socklen_t addrlen = sizeof addr;
     int cfd = accept(fd, (struct sockaddr *)&addr, &addrlen);
     if (cfd == -1) {
@@ -2229,6 +2288,7 @@ h_accept(const int fd, const short which, Server *s)
         printf("accept %d\n", cfd);
     }
 
+    // 2. config client fd non-block
     int flags = fcntl(cfd, F_GETFL, 0);
     if (flags < 0) {
         twarn("getting flags");
@@ -2251,7 +2311,8 @@ h_accept(const int fd, const short which, Server *s)
         return;
     }
 
-    // NOTE: create conn with default tube
+    // 3. create conn with default tube
+    // conn.state init to STATE_WANT_COMMAND in accept
     Conn *c = make_conn(cfd, STATE_WANT_COMMAND, default_tube, default_tube);
     if (!c) {
         twarnx("make_conn() failed");
@@ -2264,10 +2325,10 @@ h_accept(const int fd, const short which, Server *s)
     }
     c->srv = s;
     c->sock.x = c;
-    c->sock.f = (Handle)prothandle; // NOTE: protocol handler
+    c->sock.f = (Handle)prothandle; // 4.1 client conn socket handler is protocol_handler
     c->sock.fd = cfd;
 
-    r = sockwant(&c->sock, 'r'); // NOTE: register READ event
+    r = sockwant(&c->sock, 'r'); // 4.2 and register read event
     if (r == -1) {
         twarn("sockwant");
         close(cfd);
@@ -2278,13 +2339,13 @@ h_accept(const int fd, const short which, Server *s)
     epollq_apply();
 }
 
-// NOTE: init global tubes, create default tube
 void
 prot_init()
 {
     started_at = nanoseconds();
     memset(op_ct, 0, sizeof(op_ct));
 
+    // generate random instance id and convert to hex representation
     int dev_random = open("/dev/urandom", O_RDONLY);
     if (dev_random < 0) {
         twarn("open /dev/urandom");

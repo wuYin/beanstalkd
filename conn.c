@@ -13,36 +13,36 @@ static int cur_conn_ct = 0, cur_worker_ct = 0, cur_producer_ct = 0;
 static uint tot_conn_ct = 0;
 int verbose = 0;
 
-// NOTE: new client watched tube t, incr it's ref count
 static void
 on_watch(Ms *a, Tube *t, size_t i)
 {
     UNUSED_PARAMETER(a);
     UNUSED_PARAMETER(i);
-    tube_iref(t);
+    tube_iref(t); // conn --watch--> tube
     t->watching_ct++;
 }
 
-// NOTE: opposite, ignore will decr it's ref count
 static void
 on_ignore(Ms *a, Tube *t, size_t i)
 {
     UNUSED_PARAMETER(a);
     UNUSED_PARAMETER(i);
-    t->watching_ct--;
+    t->watching_ct--; // conn --ignore--> tube
     tube_dref(t);
 }
 
-// NOTE: create conn with init state, default using tube and watching tubes
+// init new conn fields with "default" tube
 Conn *
 make_conn(int fd, char start_state, Tube *use, Tube *watch)
 {
+    // 1. create conn
     Conn *c = new(Conn);
     if (!c) {
         twarn("OOM");
         return NULL;
     }
 
+    // 2. conn init watch set, append "default" tube
     ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
     if (!ms_append(&c->watch, watch)) {
         free(c);
@@ -50,7 +50,7 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
         return NULL;
     }
 
-    // NOTE: update current using tube
+    // 3. conn use "default" tube
     TUBE_ASSIGN(c->use, use);
     use->using_ct++;
 
@@ -58,7 +58,7 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
     c->state = start_state;
     c->pending_timeout = -1;
     c->tickpos = 0; // Does not mean anything if in_conns is set to 0.
-    c->in_conns = 0;
+    c->in_conns = 0; // not in server.conns yet.
 
     // The list is empty.
     job_list_reset(&c->reserved_jobs);
