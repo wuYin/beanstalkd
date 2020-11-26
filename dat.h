@@ -42,7 +42,6 @@ typedef int(FAlloc)(int, int);
 #endif
 
 // The name of a tube cannot be longer than MAX_TUBE_NAME_LEN-1
-// NOTE: tube name length max 200
 #define MAX_TUBE_NAME_LEN 201
 
 // A command can be at most LINE_BUF_SIZE chars, including "\r\n". This value
@@ -56,7 +55,7 @@ typedef int(FAlloc)(int, int);
 // NOTE: lower is more urgent
 #define URGENT_THRESHOLD 1024
 
-// The default maximum job size. // NOTE: 64MB
+// The default maximum job size. // NOTE: 64KB
 #define JOB_DATA_SIZE_LIMIT_DEFAULT ((1 << 16) - 1)
 
 // The maximum value that job_data_size_limit can be set to via "-z".
@@ -234,7 +233,7 @@ struct Job {
     // bookkeeping fields; these are in-memory only
     char pad[6];
     Tube *tube;                 // NOTE: tube which job belong to
-    Job *prev, *next;           // linked list of jobs // NOTE: using for buried queue
+    Job *prev, *next;           // linked list of jobs // for buried linked list or reserved jobs linked list
     Job *ht_next;               // Next job in a hash table list // NOTE: using for tube heap linked list
     size_t heap_index;          // where is this job in its current heap // NOTE: index of it's tube heap
     File *file;
@@ -248,13 +247,13 @@ struct Job {
 };
 
 struct Tube {
-    uint refs;                  // NOTE: reference count
+    uint refs;                  // reference count
     char name[MAX_TUBE_NAME_LEN];
-    Heap ready;                 // NOTE: ready jobs sorted by priority
-    Heap delay;                 // NOTE: delay jobs sorted by duration
-    Ms waiting_conns;           // conns waiting for the job at this moment
-
+    Heap ready;                 // ready jobs sorted by priority
+    Heap delay;                 // delay jobs sorted by countdown delay time
     Job buried;                 // linked list header
+
+    Ms waiting_conns;           // consumers // conns waiting for the job at this moment
 
     struct stats stat;
     uint using_ct;
@@ -287,7 +286,7 @@ void warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void warnx(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 char* fmtalloc(char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void* zalloc(int n);
-#define new(T) zalloc(sizeof(T))
+#define new(T) zalloc(sizeof(T)) // new actually malloc + memset init
 void optparse(Server*, char**);
 
 extern const char *progname;

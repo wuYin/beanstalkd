@@ -104,7 +104,7 @@ main(int argc, char **argv)
 
     srv.sock.fd = r;
 
-    // 3. init global tube list, create `default` tube
+    // 3. init global tube list multi set, create "default" tube
     prot_init();
 
     if (srv.user)

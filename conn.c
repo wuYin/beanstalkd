@@ -124,14 +124,18 @@ conntickat(Conn *c)
     int margin = 0, should_timeout = 0;
     int64 t = INT64_MAX;
 
+    // 1. client is waiting for job
     if (conn_waiting(c)) {
         margin = SAFETY_MARGIN;
     }
 
+    // 2.1 t is soonest delay --> ready job countdown time
+    // 2.2 t is soonest TTR countdown time
     if (has_reserved_job(c)) {
         t = connsoonestjob(c)->r.deadline_at - nanoseconds() - margin;
         should_timeout = 1;
     }
+    // 2.3 t is shorter reserve timeout
     if (c->pending_timeout >= 0) {
         t = min(t, ((int64)c->pending_timeout) * 1000000000);
         should_timeout = 1;
@@ -149,10 +153,12 @@ conntickat(Conn *c)
 void
 connsched(Conn *c)
 {
+    // 1. if c registered into server, remove from it
     if (c->in_conns) {
         heapremove(&c->srv->conns, c->tickpos);
         c->in_conns = 0;
     }
+    // 2. if not register or need reschedule, find most urgent tickat and [re]insert
     c->tickat = conntickat(c);
     if (c->tickat) {
         heapinsert(&c->srv->conns, c);
@@ -171,6 +177,7 @@ conn_set_soonestjob(Conn *c, Job *j) {
 
 // Return the reserved job with the earliest deadline,
 // or NULL if there's no reserved job.
+// NOTE: traverse and find soonest job in all reserved job in c
 Job *
 connsoonestjob(Conn *c)
 {

@@ -284,9 +284,10 @@ static Job *remove_buried_job(Job *j);
 // epollq_add schedules connection c in the s->conns heap, adds c
 // to the epollq list to change expected operation in event notifications.
 // rw='w' means to notify when socket is writeable, 'r' - readable, 'h' - closed.
+// refresh tickat for c in server.conns heap
 static void
 epollq_add(Conn *c, char rw) {
-    c->rw = rw;
+    c->rw = rw; // tag next event for c
     connsched(c);
     c->next = epollq;
     epollq = c;
@@ -1258,12 +1259,15 @@ maybe_enqueue_incoming_job(Conn *c)
 {
     Job *j = c->in_job;
 
+    fprintf(stderr, "%s\n", ".....");
     /* do we have a complete job? */
     if (c->in_job_read == j->r.body_size) {
         enqueue_incoming_job(c);
         return;
     }
 
+    // we may read same conn multi times for one job which overflowed header
+    // change conn state to wait more data
     /* otherwise we have incomplete data, so just keep waiting */
     c->state = STATE_WANT_DATA;
 }
@@ -1341,7 +1345,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
-        // 1.2 job data size > 60MB
+        // 1.2 job data size > 64KB
         if (body_size > job_data_size_limit) {
             /* throw away the job body and respond with JOB_TOO_BIG */
             skip(c, (int64)body_size + 2, MSG_JOB_TOO_BIG);
@@ -1371,9 +1375,10 @@ dispatch_cmd(Conn *c)
             return;
         }
 
+        // 1.4 copy part of job data in header into job body
         fill_extra_data(c);
 
-        // 1.4 if cur job read complete, enqueue it
+        // 1.5 if cur job read complete, enqueue it
         /* it's possible we already have a complete job */
         maybe_enqueue_incoming_job(c);
         return;
