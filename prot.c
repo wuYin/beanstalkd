@@ -456,12 +456,14 @@ next_awaited_job(int64 now)
 }
 
 // process_queue performs reservation for every jobs that is awaited for.
+// traverse all tubes, find all ready job which attached a waiting conn
 static void
 process_queue()
 {
     Job *j = NULL;
     int64 now = nanoseconds();
 
+    // 1. find jobs which have waiting conn, sorted by smaller [priority, id]
     while ((j = next_awaited_job(now))) {
         heapremove(&j->tube->ready, j->heap_index);
         ready_ct--;
@@ -470,15 +472,20 @@ process_queue()
             j->tube->stat.urgent_ct--;
         }
 
-        Conn *c = ms_take(&j->tube->waiting_conns);
+        Conn *c = ms_take(&j->tube->waiting_conns); // sequential even dispatch job to all waiting conns
         if (c == NULL) {
             twarnx("waiting_conns is empty");
             continue;
         }
         global_stat.reserved_ct++;
 
+        // 2. remove c from it's all watching tubes waiting set
+        // means same time only ONE watching tube can delivery job to one conn
         remove_waiting_conn(c);
+        // 3. insert j into c.reserved_job linked list
+        // if j is more urgent, set it to soonest_job
         conn_reserve_job(c, j);
+        // 4. set j as conn.send_job, mark conn as writeable
         reply_job(c, j, MSG_RESERVED);
     }
 }
@@ -543,6 +550,7 @@ enqueue_job(Server *s, Job *j, int64 delay, char update_store)
 
     // The call below makes this function do too much.
     // TODO: refactor this call outside so the call is explicit (not hidden)?
+    // after new job enqueue, now dispatch it to one worker conn
     process_queue();
     return 1;
 }
@@ -1478,6 +1486,8 @@ dispatch_cmd(Conn *c)
         op_ct[type]++;
         connsetworker(c);
 
+        // 1. if conn already reserved jobs, and soonest job now crossed SAFE_MARGIN
+        // 2. and none of conn watching tubes have ready job
         if (conndeadlinesoon(c) && !conn_ready(c)) {
             reply_msg(c, MSG_DEADLINE_SOON);
             return;
@@ -2241,7 +2251,7 @@ prottick(Server *s)
     for (i = 0; i < tubes.len; i++) {
         t = tubes.items[i];
         d = t->unpause_at - now;
-        // 2.1 if pause expired, reset and process
+        // 2.1 if pause expired, send tube's ready job to waiting conns
         if (t->pause && d <= 0) {
             t->pause = 0;
             process_queue();
