@@ -31,18 +31,16 @@ on_ignore(Ms *a, Tube *t, size_t i)
     tube_dref(t);
 }
 
-// init new conn fields with "default" tube
 Conn *
 make_conn(int fd, char start_state, Tube *use, Tube *watch)
 {
-    // 1. create conn
     Conn *c = new(Conn);
     if (!c) {
         twarn("OOM");
         return NULL;
     }
 
-    // 2. conn init watch set, append "default" tube
+    // 将 "default" tube 加入 watch 集
     ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
     if (!ms_append(&c->watch, watch)) {
         free(c);
@@ -50,13 +48,14 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
         return NULL;
     }
 
-    // 3. conn use "default" tube
+    // 使用 "default" tube
     TUBE_ASSIGN(c->use, use);
     use->using_ct++;
 
+    // 设置字段
     c->sock.fd = fd;
     c->state = start_state;
-    c->pending_timeout = -1;
+    c->pending_timeout = -1; // 暂无 reserve 超时时间
     c->tickpos = 0; // Does not mean anything if in_conns is set to 0.
     c->in_conns = 0; // not in server.conns yet.
 
@@ -118,24 +117,24 @@ has_reserved_job(Conn *c)
 
 
 // Returns positive nanoseconds when c should tick, 0 otherwise.
+// 计算下一个超时事件的时间戳
 static int64
 conntickat(Conn *c)
 {
     int margin = 0, should_timeout = 0;
     int64 t = INT64_MAX;
 
-    // 1. client is waiting for job
+    // conn 还在 reserve 则有 margin 安全时间
     if (conn_waiting(c)) {
         margin = SAFETY_MARGIN;
     }
 
-    // 2.1 t is soonest delay --> ready job countdown time
-    // 2.2 t is soonest TTR countdown time
+    // 1. t 是最短 TTR 的剩余时间
     if (has_reserved_job(c)) {
         t = connsoonestjob(c)->r.deadline_at - nanoseconds() - margin;
         should_timeout = 1;
     }
-    // 2.3 t is shorter reserve timeout
+    // 2. t 是 reserve timeout
     if (c->pending_timeout >= 0) {
         t = min(t, ((int64)c->pending_timeout) * 1000000000);
         should_timeout = 1;
@@ -150,16 +149,18 @@ conntickat(Conn *c)
 
 // Remove c from the c->srv heap and reschedule it using the value
 // returned by conntickat if there is an outstanding timeout in the c.
+// 刷新 c 的超时时间，重新调度
 void
 connsched(Conn *c)
 {
-    // 1. if c registered into server, remove from it
+    // 1. 将 c 从 server 的 conns 堆中移除
     if (c->in_conns) {
         heapremove(&c->srv->conns, c->tickpos);
         c->in_conns = 0;
     }
-    // 2. if not register or need reschedule, find most urgent tickat and [re]insert
+    // 2. 重新计算 c 的下一次超时时间戳，重新加入 server.conns 调度
     c->tickat = conntickat(c);
+    // 注意若 c 无超时时间则不会被加入到 s.conns 队列中
     if (c->tickat) {
         heapinsert(&c->srv->conns, c);
         c->in_conns = 1;
@@ -178,6 +179,7 @@ conn_set_soonestjob(Conn *c, Job *j) {
 // Return the reserved job with the earliest deadline,
 // or NULL if there's no reserved job.
 // NOTE: traverse and find soonest job in all reserved job in c
+// 遍历 conn 的 reserved 链表，找出 job.deadline_at 最小的 job 作为最快过期的 job
 Job *
 connsoonestjob(Conn *c)
 {
