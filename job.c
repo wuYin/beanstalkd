@@ -22,6 +22,7 @@ _get_job_hash_index(uint64 job_id)
     return job_id % all_jobs_cap;
 }
 
+// 存储 jobid -> job 的哈希表
 static void
 store_job(Job *j)
 {

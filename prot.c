@@ -397,6 +397,7 @@ reply_job(Conn *c, Job *j, const char *msg)
 // remove_waiting_conn unsets CONN_TYPE_WAITING for the connection,
 // removes it from the waiting_conns set of every tube it's watching.
 // Noop if connection is not waiting.
+// 将 c 从她所有的 watching tubes 的 waiting conn 集合中移除
 void
 remove_waiting_conn(Conn *c)
 {
@@ -415,6 +416,7 @@ remove_waiting_conn(Conn *c)
 
 // enqueue_waiting_conn sets CONN_TYPE_WAITING for the connection,
 // adds it to the waiting_conns set of every tube it's watching.
+// 将 conn 加入其 watching tubes 的 waiting conns 集合中等待
 static void
 enqueue_waiting_conn(Conn *c)
 {
@@ -432,6 +434,7 @@ enqueue_waiting_conn(Conn *c)
 // returns the next ready job with the smallest priority.
 // If jobs has the same priority it picks the job with smaller id.
 // All tubes with expired pause are unpaused.
+// 遍历所有 tube 找出下一个最优先的 job
 static Job *
 next_awaited_job(int64 now)
 {
@@ -457,13 +460,14 @@ next_awaited_job(int64 now)
 
 // process_queue performs reservation for every jobs that is awaited for.
 // traverse all tubes, find all ready job which attached a waiting conn
+// 按优先级顺序，将所有 tube 的所有 ready job 轮询分发给该 tube 上 waiting 的连接
 static void
 process_queue()
 {
     Job *j = NULL;
     int64 now = nanoseconds();
 
-    // 1. find jobs which have waiting conn, sorted by smaller [priority, id]
+    // 1. 从全局 tubes 列表中按 [priority, id] 比较找出最紧急处理的 Job
     while ((j = next_awaited_job(now))) {
         heapremove(&j->tube->ready, j->heap_index);
         ready_ct--;
@@ -472,6 +476,7 @@ process_queue()
             j->tube->stat.urgent_ct--;
         }
 
+        // 2. 顺序地从该 tube 的等待连接中取出一个 conn
         Conn *c = ms_take(&j->tube->waiting_conns); // sequential even dispatch job to all waiting conns
         if (c == NULL) {
             twarnx("waiting_conns is empty");
@@ -479,13 +484,13 @@ process_queue()
         }
         global_stat.reserved_ct++;
 
-        // 2. remove c from it's all watching tubes waiting set
         // means same time only ONE watching tube can delivery job to one conn
+        // 2. 将 c 从它 watch 的所有 tube 的 waiting 中全部移除
         remove_waiting_conn(c);
-        // 3. insert j into c.reserved_job linked list
         // if j is more urgent, set it to soonest_job
+        // 3. 将 job 插入到 c.reserved_job 链表中
         conn_reserve_job(c, j);
-        // 4. set j as conn.send_job, mark conn as writeable
+        // 4. 响应 reserve 命令
         reply_job(c, j, MSG_RESERVED);
     }
 }
@@ -1267,15 +1272,13 @@ maybe_enqueue_incoming_job(Conn *c)
 {
     Job *j = c->in_job;
 
-    fprintf(stderr, "%s\n", ".....");
     /* do we have a complete job? */
     if (c->in_job_read == j->r.body_size) {
         enqueue_incoming_job(c);
         return;
     }
 
-    // we may read same conn multi times for one job which overflowed header
-    // change conn state to wait more data
+    // 读到的 job 还是少于 job_size 就认为还没读完，保持 WANT_DATA 继续读
     /* otherwise we have incomplete data, so just keep waiting */
     c->state = STATE_WANT_DATA;
 }
@@ -1343,7 +1346,7 @@ dispatch_cmd(Conn *c)
     switch (type) {
     // 1. PUT
     case OP_PUT:
-        // 1.1 parse fields
+        // 1.1 解析字段
         if (read_u32(&pri, c->cmd + 4, &delay_buf) ||
             read_duration(&delay, delay_buf, &ttr_buf) ||
             read_duration(&ttr, ttr_buf, &size_buf) ||
@@ -1353,7 +1356,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
-        // 1.2 job data size > 64KB
+        // 1.2 job 大于 64KB
         if (body_size > job_data_size_limit) {
             /* throw away the job body and respond with JOB_TOO_BIG */
             skip(c, (int64)body_size + 2, MSG_JOB_TOO_BIG);
@@ -1369,10 +1372,10 @@ dispatch_cmd(Conn *c)
         connsetproducer(c);
 
         if (ttr < 1000000000) {
-            ttr = 1000000000; // default ttr is 1s
+            ttr = 1000000000; // 默认的 ttr 是 1s
         }
 
-        // 1.3 create new job
+        // 1.3 创建新的 job
         c->in_job = make_job(pri, delay, ttr, body_size + 2, c->use);
 
         /* OOM? */
@@ -1383,10 +1386,10 @@ dispatch_cmd(Conn *c)
             return;
         }
 
-        // 1.4 copy part of job data in header into job body
+        // 1.4 将 header 中多余读取到的数据挪到 job body 中
         fill_extra_data(c);
 
-        // 1.5 if cur job read complete, enqueue it
+        // 1.5 如果已读取到完整的 job，则尝试入队
         /* it's possible we already have a complete job */
         maybe_enqueue_incoming_job(c);
         return;
@@ -1899,6 +1902,11 @@ dispatch_cmd(Conn *c)
  *  3. A waiting client's requested timeout has occurred.
  *
  * If any of these happen, we must do the appropriate thing. */
+
+// 连接超时有 3 种 case
+// 1. TTR 到期
+// 2. reserved job 进去了 DEADLINE_SOON
+// 3. reserve 等到超时
 static void
 conn_timeout(Conn *c)
 {
@@ -1906,11 +1914,14 @@ conn_timeout(Conn *c)
     Job *j;
 
     /* Check if the client was trying to reserve a job. */
+    // 1. 检查 c 是否在等待 reserve
     if (conn_waiting(c) && conndeadlinesoon(c))
         should_timeout = 1;
 
     /* Check if any reserved jobs have run out of time. We should do this
      * whether or not the client is waiting for a new reservation. */
+    // 2. 检查是否有 TTR 已到期的 job
+    // 不管 client 是否处于 waiting 状态都必须检查，才能让此 job 分发给其他 waitingConn
     while ((j = connsoonestjob(c))) {
         if (j->r.deadline_at >= nanoseconds())
             break;
@@ -1925,9 +1936,11 @@ conn_timeout(Conn *c)
 
         timeout_ct++; /* stats */
         j->r.timeout_ct++;
+        // 2.1 将已到期 job 放回 ready 堆
         int r = enqueue_job(c->srv, remove_this_reserved_job(c, j), 0, 0);
         if (r < 1)
             bury_job(c->srv, j, 0); /* out of memory, so bury it */
+        // 2.2 刷新 c 在 server.conns 堆中的位置
         connsched(c);
     }
 
@@ -2176,7 +2189,7 @@ conn_process_io(Conn *c)
 #define want_command(c) ((c)->sock.fd && ((c)->state == STATE_WANT_COMMAND))
 #define cmd_data_ready(c) (want_command(c) && (c)->cmd_read)
 
-// protocol handler for client socket, read cmd  and handle to response
+// 处理连接请求与响应
 static void
 h_conn(const int fd, const short which, Conn *c)
 {
@@ -2187,15 +2200,14 @@ h_conn(const int fd, const short which, Conn *c)
         epollq_apply();
         return;
     }
-    // 1. client disconnected, tag it
     if (which == 'h') {
         c->halfclosed = 1;
     }
 
-    // 2. CORE: switch conn state and read cmd from it
+    // 1. 根据 conn 的状态决定 IO 的读写操作
     conn_process_io(c);
 
-    // 3. CORE: dispatch cmd
+    // 2. 读取到命令后执行分发
     // TODO: scan again may unnecessary // while (cmd_data_ready(c)) {
     while (cmd_data_ready(c) && (c->cmd_len = scan_line_end(c->cmd, c->cmd_read))) {
         // if read a complete cmd, dispatch to corresponding cmd handler
@@ -2216,6 +2228,7 @@ prothandle(Conn *c, int ev)
 }
 
 // prottick returns nanoseconds till the next work.
+// 1. 将 delay 到期的 job 挪到 ready 堆上
 int64
 prottick(Server *s)
 {
@@ -2229,15 +2242,15 @@ prottick(Server *s)
 
     // Enqueue all jobs that are no longer delayed.
     // Capture the smallest period from the soonest delayed job.
-    // 1. find soonest expired delay job from all tubes delay heap
+    // 1. 遍历 tubes 找出最快到期的 job，过期则从 delay 堆挪到 ready 堆
     while ((j = soonest_delayed_job())) {
         d = j->r.deadline_at - now;
+        // 1.1 若最快到期的 job 都未到期，则忽略
         if (d > 0) {
-            // 1.1 found soonest delayed, update period
             period = min(period, d);
             break;
         }
-        // 1.2 job j expired, remove from delay heap, then insert to ready heap
+        // 1.2 若到期则挪到 ready 堆上
         heapremove(&j->tube->delay, j->heap_index);
         int r = enqueue_job(s, j, 0, 0);
         if (r < 1)
@@ -2263,16 +2276,16 @@ prottick(Server *s)
 
     // Process connections with pending timeouts. Release jobs with expired ttr.
     // Capture the smallest period from the soonest connection.
-    // 3. traverse all conns and find soonest expired TTR or timeout conn
+    // 3. 找出最快有过期事件（TTR 到期，reserve 超时）的连接
     while (s->conns.len) {
         Conn *c = s->conns.data[0];
         d = c->tickat - now;
         if (d > 0) {
-            // 3.1 cutdown ttr
+            // 3.1 最快超时的连接都还未超时则不处理
             period = min(period, d);
             break;
         }
-        // 3.2 conn timeout
+        // 3.2 已超时则移除
         heapremove(&s->conns, 0);
         c->in_conns = 0;
         conn_timeout(c);

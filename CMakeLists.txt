@@ -22,6 +22,6 @@ add_executable(beanstalkd
         tube.c
         util.c
         walg.c
-        linux.c
+#        linux.c
         dat.h
         )

@@ -39,13 +39,13 @@ void srv_acquire_wal(Server *s) {
 void
 srvserve(Server *s)
 {
-    // 1. create epoll fd
+    // 1. 创建 epoll fd
     if (sockinit() == -1) {
         twarnx("sockinit");
         exit(1);
     }
 
-    // 2. socket s prepare to accept conn
+    // 2. 为 server socket 注册读事件，准备 accept 连接
     s->sock.x = s;
     s->sock.f = (Handle)srvaccept;
     s->conns.less = conn_less;
@@ -56,10 +56,10 @@ srvserve(Server *s)
         exit(2);
     }
 
-    // 4. block event loop
-    Socket *sock; // sock -> *Socket -> Socket
+    // 3. 阻塞执行 event loop
+    Socket *sock; // 注意 sock 是指向 Socket 的指针
     for (;;) {
-        // 4.1 calculate next epoll timeout
+        // 3.1 先计算本次 epoll wait 的超时时间
         int64 period = prottick(s);
 
         // 4.2 try to wait events happened in sock
