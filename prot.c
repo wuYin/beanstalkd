@@ -2395,6 +2395,7 @@ prot_init()
 // structures and adds it to the log.
 //
 // Returns 1 on success, 0 on failure.
+// 读完 binlog，回放 job 链表，重建 server 状态
 int
 prot_replay(Server *s, Job *list)
 {
@@ -2402,6 +2403,7 @@ prot_replay(Server *s, Job *list)
     int64 t;
     int r;
 
+    // 遍历链表
     for (j = list->next ; j != list ; j = nj) {
         nj = j->next;
         job_list_remove(j);
