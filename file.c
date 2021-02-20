@@ -53,6 +53,7 @@ enum
 // rawfalloc allocates disk space of len bytes.
 // It expects fd's offset to be 0; may also reset fd's offset to 0.
 // Returns 0 on success, and a positive errno otherwise.
+// 以 4KB 为单位，向 fd 中预写入 len 字节的 NULL 数据
 int
 rawfalloc(int fd, int len)
 {
@@ -97,7 +98,7 @@ fileaddjob(File *f, Job *j)
 
     h = &f->jlist;
     if (!h->fprev) h->fprev = h;
-    j->file = f;
+    j->file = f; // 绑定 j 的 binlog file
     j->fprev = h->fprev;
     j->fnext = h;
     h->fprev->fnext = j;
@@ -129,12 +130,14 @@ fileread(File *f, Job *list)
 {
     int err = 0, v;
 
+    // 1. binlog 版本号
     if (!readfull(f, &v, sizeof(v), &err, "version")) {
         return err;
     }
     switch (v) {
     case Walver:
         fileincref(f);
+        // 2. job record
         while (readrec(f, list, &err));
         filedecref(f);
         return err;
@@ -153,6 +156,7 @@ fileread(File *f, Job *list)
 // Readrec reads a record from f->fd into linked list l.
 // If an error occurs, it sets *err to 1.
 // Readrec returns the number of records read, either 1 or 0.
+// [tube_name_len] [tube_name] [job_record]
 static int
 readrec(File *f, Job *l, int *err)
 {
@@ -163,6 +167,7 @@ readrec(File *f, Job *l, int *err)
     Tube *t;
     char tubename[MAX_TUBE_NAME_LEN];
 
+    // 1. tube_name 长度
     r = read(f->fd, &namelen, sizeof(int));
     if (r == -1) {
         twarn("read");
@@ -186,6 +191,7 @@ readrec(File *f, Job *l, int *err)
         return 0;
     }
 
+    // 2. tube_name
     if (namelen) {
         r = readfull(f, tubename, namelen, err, "tube name");
         if (!r) {
@@ -193,8 +199,9 @@ readrec(File *f, Job *l, int *err)
         }
         sz += r;
     }
-    tubename[namelen] = '\0';
+    tubename[namelen] = '\0'; // 截断
 
+    // 3. Jobrec
     r = readfull(f, &jr, sizeof(Jobrec), err, "job struct");
     if (!r) {
         return 0;
@@ -222,6 +229,7 @@ readrec(File *f, Job *l, int *err)
     case Ready:
     case Buried:
     case Delayed:
+        // job 首次出现则放入 tube
         if (!j) {
             if ((size_t)jr.body_size > job_data_size_limit) {
                 warnpos(f, -r, "job %"PRIu64" is too big (%"PRId32" > %zu)",
@@ -237,10 +245,11 @@ readrec(File *f, Job *l, int *err)
             j->r.created_at = jr.created_at;
         }
         j->r = jr;
-        job_list_insert(l, j);
+        job_list_insert(l, j); // 新插入 l
 
         // full record; read the job body
         if (namelen) {
+            // job body 不应该变化
             if (jr.body_size != j->r.body_size) {
                 warnpos(f, -r, "job %"PRIu64" size changed", j->r.id);
                 warnpos(f, -r, "was %d, now %d", j->r.body_size, jr.body_size);
@@ -255,6 +264,7 @@ readrec(File *f, Job *l, int *err)
             // since this is a full record, we can move
             // the file pointer and decref the old
             // file, if any
+            // job 在新的 binlog 中出现
             filermjob(j->file, j);
             fileaddjob(f, j);
         }
@@ -418,6 +428,7 @@ Error:
 }
 
 
+// 保证从 f 中读取 n 字节到内存 c 中，desc 是读取动作的错误描述
 static int
 readfull(File *f, void *c, int n, int *err, char *desc)
 {

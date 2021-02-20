@@ -438,15 +438,17 @@ enum
 
 struct Wal {
     int    filesize; // NOTE: -s max binlog file size
-    int    use;
+    int    use; // 命令行是否有 -b bin_dir
     char   *dir; // NOTE: -b binlog dir
-    File   *head;
+    File   *head; // 打开的文件列表
     File   *cur;
     File   *tail;
     int    nfile;
     int    next;
+
     int64  resv;  // bytes reserved
     int64  alive; // bytes in use
+
     int64  nmig;  // migrations
     int64  nrec;  // records written ever
     int    wantsync; // do we sync to disk?
@@ -463,7 +465,7 @@ void walgc(Wal*);
 
 
 struct File {
-    File *next;
+    File *next; // 供 wal 链表使用
     uint refs;
     int  seq;
     int  iswopen; // is open for writing

@@ -111,6 +111,7 @@ main(int argc, char **argv)
         su(srv.user);
     set_sig_handlers();
 
+    // 从 WAL 中恢复状态
     srv_acquire_wal(&srv);
 
     // 4. start server and do event loop

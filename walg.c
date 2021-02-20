@@ -19,6 +19,8 @@ static int reserve(Wal *w, int n);
 // returns the minimum number.
 // If no files are found, sets w->next to 1 and
 // returns a large number.
+// 扫描 w->dir 日志目录，获取 binlog.NNN 后缀，返回下一个未使用的 binlog 序号，并递增 w->next
+// 无 binlog 则从 2^30 开始
 static int
 walscandir(Wal *w)
 {
@@ -26,7 +28,7 @@ walscandir(Wal *w)
     static const int len = sizeof(base) - 1;
     DIR *d;
     struct dirent *e;
-    int min = 1<<30;
+    int min = 1<<30; // 2^30
     int max = 0;
     int n;
     char *p;
@@ -45,11 +47,14 @@ walscandir(Wal *w)
     }
 
     closedir(d);
-    w->next = max + 1;
+    w->next = max + 1; // 递增
     return min;
 }
 
 
+// 只要有 binlog file 引用计数归零，就尝试做一次 GC
+// 注意只是尝试，有不触发的可能
+// 因为设计上，GC 顺序是严格从 w.head 到 w.tail 的
 void
 walgc(Wal *w)
 {
@@ -94,7 +99,7 @@ ratio(Wal *w)
     int64 n, d;
 
     d = w->alive + w->resv;
-    n = (int64)w->nfile * (int64)w->filesize - d;
+    n = (int64)w->nfile * (int64)w->filesize - d; // 所有 binlog 大小上限 - 已使用大小 = 剩余大小
     if (!d) return 0;
     return n / d;
 }
@@ -150,7 +155,9 @@ walcompact(Wal *w)
 {
     int r;
 
+    // idle / used >= 2 // idle >= 2*used
     for (r=ratio(w); r>=2; r--) {
+        // 一个个 Job 地尝试做 compact
         moveone(w);
     }
 }
@@ -175,6 +182,7 @@ walsync(Wal *w)
 // On failure, walwrite disables w and returns 0; on success, it returns 1.
 // Unlke walresv*, walwrite should never fail because of a full disk.
 // If w is disabled, then walwrite takes no action and returns 1.
+// 将 j 写入 binlog
 int
 walwrite(Wal *w, Job *j)
 {
@@ -341,6 +349,7 @@ reserve(Wal *w, int n)
         return n;
     }
 
+    // 滚动文件
     r = needfree(w, n);
     if (r != n) {
         twarnx("needfree");
@@ -363,16 +372,18 @@ reserve(Wal *w, int n)
 
 
 // Returns the number of bytes reserved or 0 on error.
+// 为 put 新 job j 预留空间
 int
 walresvput(Wal *w, Job *j)
 {
     int z = 0;
 
     // reserve space for the initial job record
-    z += sizeof(int);
-    z += strlen(j->tube->name);
-    z += sizeof(Jobrec);
-    z += j->r.body_size;
+    // job_line
+    z += sizeof(int); // 1. tube_name_len
+    z += strlen(j->tube->name); // 2. tube_name
+    z += sizeof(Jobrec); // 3. job_rec
+    z += j->r.body_size; // 4. job_body
 
     // plus space for a delete to come later
     z += sizeof(int);
@@ -383,6 +394,7 @@ walresvput(Wal *w, Job *j)
 
 
 // Returns the number of bytes reserved or 0 on error.
+// 为更新 job 的新状态预留空间
 int
 walresvupdate(Wal *w)
 {
@@ -429,6 +441,7 @@ waldirlock(Wal *w)
 
     // intentionally leak fd, since we never want to close it
     // and we'll never need it again
+    // 不释放 wal lock 的 fd
     return 1;
 }
 
@@ -439,6 +452,8 @@ walread(Wal *w, Job *list, int min)
     int i;
     int err = 0;
 
+    // 如果是首次启动 min: 2^30,  w->next: 1
+    // 遍历所有 binlog 文件，打开，读取 job 到 list
     for (i = min; i < w->next; i++) {
         File *f = new(File);
         if (!f) {
