@@ -9,7 +9,7 @@ typedef uint32_t      uint32;
 typedef int64_t       int64;
 typedef uint64_t      uint64;
 
-typedef struct Ms     Ms; // NOTE: multi set
+typedef struct Ms     Ms; // 动态扩容的无序集合
 typedef struct Job    Job;
 typedef struct Tube   Tube;
 typedef struct Conn   Conn;
@@ -103,12 +103,11 @@ typedef void(*setpos_fn)(void*, size_t);
 
 struct Heap {
     size_t  cap;                // capacity of the heap
-    // NOTE: data index start from 0, so len also next index for new element
-    size_t  len;                // amount of elements in the heap
+    size_t  len;                // amount of elements in the heap // 从 0 开始计数，也可作为 next 索引
     void    **data;             // actual elements
 
-    less_fn   less; // NOTE: function pointer allow user define data compare and operation
-    setpos_fn setpos;
+    less_fn   less; // 函数指针自定义堆元素比较逻辑
+    setpos_fn setpos; // 位置更新的回调
 };
 int   heapinsert(Heap *h, void *x);
 void* heapremove(Heap *h, size_t k);
@@ -247,20 +246,20 @@ struct Job {
 };
 
 struct Tube {
-    uint refs;                  // reference count
+    uint refs;        // reference count
     char name[MAX_TUBE_NAME_LEN];
-    Heap ready;                 // ready jobs sorted by priority
-    Heap delay;                 // delay jobs sorted by countdown delay time
-    Job buried;                 // linked list header
+    Heap ready;
+    Heap delay;       // 倒计时毫秒数
+    Job buried;       // 链表头
 
-    Ms waiting_conns;           // consumers // conns waiting for the job at this moment
+    Ms waiting_conns; // 等待 Job 的消费连接
 
     struct stats stat;
     uint using_ct;
     uint watching_ct;
 
-    int64 pause;      // pause is set to the duration of the current pause, otherwise 0, in nsec.
-    int64 unpause_at; // unpause_at is a timestamp when to unpause the tube, in nsec.
+    int64 pause;      // 暂停时长 ns
+    int64 unpause_at; // 恢复时间戳 ns
 };
 
 
@@ -332,7 +331,7 @@ void  tube_iref(Tube *t);
 Tube *tube_find(const char *name);
 Tube *tube_find_or_make(const char *name);
 
-// NOTE: assign tube b to tube a, decr ref for b, incr ref for a
+// 更新计数引用的 tube 赋值
 #define TUBE_ASSIGN(a,b) (tube_dref(a), (a) = (b), tube_iref(a))
 
 
@@ -501,7 +500,7 @@ struct Server {
     Socket sock;
 
     // Connections that must produce deadline or timeout, ordered by the time.
-    // NOTE: count down TTR, count down timeout
+    // 等待连接按 tickat 倒计时的紧急度为优先级
     Heap   conns;
 };
 void srv_acquire_wal(Server *s);

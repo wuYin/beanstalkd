@@ -4,7 +4,7 @@
 #include <string.h>
 
 
-// NOTE: insert value x by data index k
+// 更新位置 k 的值为 x
 static void
 set(Heap *h, size_t k, void *x)
 {
@@ -13,7 +13,6 @@ set(Heap *h, size_t k, void *x)
 }
 
 
-// NOTE: swap 2 different values with index keys
 static void
 swap(Heap *h, size_t a, size_t b)
 {
@@ -32,25 +31,26 @@ less(Heap *h, size_t a, size_t b)
 }
 
 
-// NOTE: bubble up and swap with bigger value
+// 向堆顶冒泡
 static void
 siftdown(Heap *h, size_t k)
 {
     for (;;) {
         size_t p = (k-1) / 2; /* parent */
 
+        // 没父节点小则冒泡结束
         if (k == 0 || less(h, p, k)) {
             return;
         }
 
-        // NOTE: swap data in k with parent
+        // 比父节点小则交换
         swap(h, k, p);
         k = p;
     }
 }
 
 
-// NOTE: sink down and swap with smaller value
+// 向堆底下沉
 static void
 siftup(Heap *h, size_t k)
 {
@@ -63,11 +63,12 @@ siftup(Heap *h, size_t k)
         if (l < h->len && less(h, l, s)) s = l;
         if (r < h->len && less(h, r, s)) s = r;
 
-        // NOTE: current node k is leaf in min heap, no need go farther
+        // 左右孩子都比自己大，无法再下沉
         if (s == k) {
             return; /* satisfies the heap property */
         }
 
+        // 与最小的子节点交换
         swap(h, k, s);
         k = s;
     }
@@ -79,7 +80,7 @@ siftup(Heap *h, size_t k)
 int
 heapinsert(Heap *h, void *x)
 {
-    // NOTE: if length of heap reach the capacity, scale up memory*2
+    // 动态扩容
     if (h->len == h->cap) {
         void **ndata;
         size_t ncap = (h->len+1) * 2; /* allocate twice what we need */
@@ -95,10 +96,10 @@ heapinsert(Heap *h, void *x)
         h->cap = ncap;
     }
 
-    size_t k = h->len;
+    size_t k = h->len; // 下一个空位
     h->len++;
     set(h, k, x);
-    siftdown(h, k);
+    siftdown(h, k); // 冒泡
     return 1;
 }
 
@@ -111,9 +112,9 @@ heapremove(Heap *h, size_t k)
     }
 
     void *x = h->data[k];
-    h->len--;
-    set(h, k, h->data[h->len]); // NOTE: replace index k element with last element
-    siftdown(h, k); // NOTE: bubble and sink to find most suitable index for original last element
-    siftup(h, k);
+    h->len--; // 下次 insert 会覆盖 last
+    set(h, k, h->data[h->len]); // 用 last 替换 K
+    siftdown(h, k); // 冒泡原 last
+    siftup(h, k); // 下沉原 last，或下沉换下的 parent
     return x;
 }

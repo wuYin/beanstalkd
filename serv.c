@@ -45,7 +45,7 @@ srvserve(Server *s)
         exit(1);
     }
 
-    // 2. 为 server socket 注册读事件，准备 accept 连接
+    // 2. 为 server socket 注册读事件，准备 accept
     s->sock.x = s;
     s->sock.f = (Handle)srvaccept;
     s->conns.less = conn_less;
@@ -57,19 +57,19 @@ srvserve(Server *s)
     }
 
     // 3. 阻塞执行 event loop
-    Socket *sock; // 注意 sock 是指向 Socket 的指针
+    Socket *sock;
     for (;;) {
-        // 3.1 先计算本次 epoll wait 的超时时间
+        // 3.1 预估 epoll 下次事件发生时间
         int64 period = prottick(s);
 
-        // 4.2 try to wait events happened in sock
+        // 3.2 等待有事件发生的 Socket
         int rw = socknext(&sock, period);
         if (rw == -1) {
             twarnx("socknext");
             exit(1);
         }
 
-        // 4.3 handle event
+        // 3.3 调用 sock handler
         if (rw) {
             sock->f(sock->x, rw);
         }

@@ -231,7 +231,6 @@ conn_ready(Conn *c)
 }
 
 
-// NOTE: compare Conn with tickat
 int
 conn_less(void *ca, void *cb)
 {

@@ -3,12 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// NOTE: tubes maintains all tubes created by cur beanstalkd
+// 全局 tube 集合
 struct Ms tubes;
 
-// NOTE: truncate tube name
-// NOTE: set ready/delay heap less comparators
-// NOTE: init buried linked list and waiting_conns ms
 Tube *
 make_tube(const char *name)
 {
@@ -16,6 +13,7 @@ make_tube(const char *name)
     if (!t)
         return NULL;
 
+    // 截断 tube 名字
     strncpy(t->name, name, MAX_TUBE_NAME_LEN);
     if (t->name[MAX_TUBE_NAME_LEN - 1] != '\0') {
         t->name[MAX_TUBE_NAME_LEN - 1] = '\0';
@@ -27,6 +25,7 @@ make_tube(const char *name)
     t->ready.setpos = job_setpos;
     t->delay.setpos = job_setpos;
 
+    // 头尾指向自身的 dummy 节点
     Job j = {.tube = NULL};
     t->buried = j;
     t->buried.prev = t->buried.next = &t->buried;
@@ -45,7 +44,7 @@ tube_free(Tube *t)
     free(t);
 }
 
-// NOTE: decr ref count of t, free it if ref is 0, like last client also ignore tube t
+// 递减计数若减到 0 则释放 tube
 void
 tube_dref(Tube *t)
 {
@@ -67,7 +66,6 @@ tube_iref(Tube *t)
     ++t->refs;
 }
 
-// NOTE: create tube and weak append into global tube list
 static Tube *
 make_and_insert_tube(const char *name)
 {
@@ -80,14 +78,15 @@ make_and_insert_tube(const char *name)
 
     /* We want this global tube list to behave like "weak" refs, so don't
      * increment the ref count. */
+    // 全局 tube 列表对 tube 的记录不计数
     r = ms_append(&tubes, t);
     if (!r)
-        // NOTE: oom and register failed, delete the new tube
         return tube_dref(t), (Tube *) 0;
 
     return t;
 }
 
+// 遍历全局 tube 集合查找同名 tube
 Tube *
 tube_find(const char *name)
 {

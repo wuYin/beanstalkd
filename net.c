@@ -33,7 +33,7 @@ set_nonblocking(int fd)
     return 0;
 }
 
-// NOTE: create server socket fd, bind and listen
+// 创建 server socket fd 并监听
 static int
 make_inet_socket(char *host, char *port)
 {
@@ -42,15 +42,16 @@ make_inet_socket(char *host, char *port)
     struct addrinfo *airoot, *ai, hints;
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC; // 未指定协议族
+    hints.ai_socktype = SOCK_STREAM; // TCP
+    hints.ai_flags = AI_PASSIVE; // 被动绑定
     r = getaddrinfo(host, port, &hints, &airoot);
     if (r != 0) {
         twarnx("getaddrinfo(): %s", gai_strerror(r));
         return -1;
     }
 
+    // 遍历要监听的地址
     for (ai = airoot; ai; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd == -1) {
@@ -65,6 +66,7 @@ make_inet_socket(char *host, char *port)
         }
 
         flags = 1;
+        // 允许重复绑定，避免重启卡顿
         r = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof flags);
         if (r == -1) {
             twarn("setting SO_REUSEADDR on fd %d", fd);
@@ -77,6 +79,7 @@ make_inet_socket(char *host, char *port)
             close(fd);
             continue;
         }
+        // 强制关闭连接
         r = setsockopt(fd, SOL_SOCKET, SO_LINGER, &linger, sizeof linger);
         if (r == -1) {
             twarn("setting SO_LINGER on fd %d", fd);
@@ -148,7 +151,6 @@ make_inet_socket(char *host, char *port)
     return fd;
 }
 
-// NOTE: create tcp socket and bind
 static int
 make_unix_socket(char *path)
 {

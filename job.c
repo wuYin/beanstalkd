@@ -169,20 +169,19 @@ job_free(Job *j)
     free(j);
 }
 
-// NOTE: when job inserted to heap, save idx to job knows where is itself in heap
+// 回调更新 job 的堆索引，以便反溯操作
 void
 job_setpos(void *j, size_t pos)
 {
     ((Job *)j)->heap_index = pos;
 }
 
-// NOTE: job priority comparator for tube ready heap, smaller priority, smaller id
 int
 job_pri_less(void *ja, void *jb)
 {
     Job *a = (Job *)ja;
     Job *b = (Job *)jb;
-    if (a->r.pri < b->r.pri) return 1;
+    if (a->r.pri < b->r.pri) return 1; // priority 小，优先级高
     if (a->r.pri > b->r.pri) return 0;
     return a->r.id < b->r.id;
 }
@@ -193,7 +192,7 @@ job_delay_less(void *ja, void *jb)
 {
     Job *a = ja;
     Job *b = jb;
-    if (a->r.deadline_at < b->r.deadline_at) return 1;
+    if (a->r.deadline_at < b->r.deadline_at) return 1; // DDL 小，优先级高
     if (a->r.deadline_at > b->r.deadline_at) return 0;
     return a->r.id < b->r.id;
 }

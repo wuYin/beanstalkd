@@ -151,16 +151,17 @@ parse_size_t(char *str)
 }
 
 
-// NOTE: traverse argv and parse into server,wal...
+// 解析命令行参数并更新 srv
 void
 optparse(Server *s, char **argv)
 {
     int64 ms;
     char *arg, *tmp;
-    // NOTE: if arg empty, try next argv, otherwise fail
+// 如果当前 arg 有值则返回，无值则取下一 argv 参数项，否则返回 default
 #   define EARGF(x) (*arg ? (tmp=arg,arg="",tmp) : (*argv ? *argv++ : (x)))
 
-    // NOTE: traverse trim `-` prefix and move to value
+    // 逐个遍历选项
+    // 若为参数项，则判断是否符合 `-k`
     while ((arg = *argv++) && *arg++ == '-' && *arg) {
         char c;
         while ((c = *arg++)) {
@@ -201,7 +202,7 @@ optparse(Server *s, char **argv)
                     s->user = EARGF(flagusage("-u"));
                     break;
                 case 'b':
-                    s->wal.dir = EARGF(flagusage("-b")); // NOTE: --binlog
+                    s->wal.dir = EARGF(flagusage("-b"));
                     s->wal.use = 1;
                     break;
                 case 'h':

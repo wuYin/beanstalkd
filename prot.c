@@ -498,6 +498,7 @@ process_queue()
 // soonest_delayed_job returns the delayed job
 // with the smallest deadline_at among all tubes.
 // NOTE: traverse all tube delayed top job in heap, compare one by one to get soonest delayed end job
+// 遍历全局 tube
 static Job *
 soonest_delayed_job()
 {
@@ -2235,7 +2236,7 @@ prottick(Server *s)
     Job *j;
     int64 now;
     Tube *t;
-    int64 period = 0x34630B8A000LL; /* 1 hour in nanoseconds */ // NOTE: min timeout is 1h
+    int64 period = 0x34630B8A000LL; /* 1 hour in nanoseconds */
     int64 d;
 
     now = nanoseconds();
@@ -2374,6 +2375,7 @@ prot_init()
     memset(op_ct, 0, sizeof(op_ct));
 
     // generate random instance id and convert to hex representation
+    // 读取 8 位 /dev/random 并用 hex 作为实例 id
     int dev_random = open("/dev/urandom", O_RDONLY);
     if (dev_random < 0) {
         twarn("open /dev/urandom");
@@ -2392,11 +2394,13 @@ prot_init()
     }
     close(dev_random);
 
+    // 读取内核信息
     if (uname(&node_info) == -1) {
         warn("uname");
         exit(50);
     }
 
+    // 初始化全局 tubes
     ms_init(&tubes, NULL, NULL);
 
     TUBE_ASSIGN(default_tube, tube_find_or_make("default"));

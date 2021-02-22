@@ -12,11 +12,12 @@ ms_init(Ms *a, ms_event_fn oninsert, ms_event_fn onremove)
     a->onremove = onremove;
 }
 
+// 动态扩容
 static int
 grow(Ms *a)
 {
     void **nitems;
-    size_t ncap = a->cap << 1; // NOTE: grow*2
+    size_t ncap = a->cap << 1; // <<1 即 *2
     if (!ncap)
         ncap = 1;
 
@@ -24,17 +25,17 @@ grow(Ms *a)
     if (!nitems)
         return 0;
 
-    memcpy(nitems, a->items, a->len * sizeof(void *)); // NOTE: copy and replace
+    memcpy(nitems, a->items, a->len * sizeof(void *)); // 内存拷贝
     free(a->items);
     a->items = nitems;
     a->cap = ncap;
     return 1;
 }
 
-// NOTE: append new item into ms, grow double memory if len reach cap
 int
 ms_append(Ms *a, void *item)
 {
+    // 容量不足则扩容
     if (a->len >= a->cap && !grow(a))
         return 0;
 
@@ -44,8 +45,6 @@ ms_append(Ms *a, void *item)
     return 1;
 }
 
-// NOTE: delete replace last elem with index i elem
-// NOTE: lazy delete overwrite, not free memory
 static int
 ms_delete(Ms *a, size_t i)
 {
@@ -54,7 +53,7 @@ ms_delete(Ms *a, size_t i)
     if (i >= a->len)
         return 0;
     item = a->items[i];
-    a->items[i] = a->items[--a->len]; // NOTE: lazy delete by replaced index i element with last element
+    a->items[i] = a->items[--a->len]; // 仅把 i 重新指向了 last 并递减 len，完全依靠 len 作为数据有效性的边界
 
     /* it has already been removed now */
     if (a->onremove)
@@ -62,7 +61,6 @@ ms_delete(Ms *a, size_t i)
     return 1;
 }
 
-// NOTE: delete all element and re-init
 void
 ms_clear(Ms *a)
 {
@@ -71,7 +69,7 @@ ms_clear(Ms *a)
     ms_init(a, a->oninsert, a->onremove);
 }
 
-// NOTE: find item and delete it
+// 查找集合并删除
 int
 ms_remove(Ms *a, void *item)
 {
@@ -84,7 +82,7 @@ ms_remove(Ms *a, void *item)
     return 0;
 }
 
-// NOTE: traverse entire ms and compare, O(N)
+// 遍历查找
 int
 ms_contains(Ms *a, void *item)
 {
@@ -97,7 +95,7 @@ ms_contains(Ms *a, void *item)
     return 0;
 }
 
-// NOTE: sequential take last accessed elem from ms and delete it
+// 有序读取下一个元素（也是最旧的），并删除
 void *
 ms_take(Ms *a)
 {
@@ -112,6 +110,6 @@ ms_take(Ms *a)
     a->last = a->last % a->len;
     item = a->items[a->last];
     ms_delete(a, a->last);
-    ++a->last; // NOTE: incr last itself
+    ++a->last; // last 持续递增
     return item;
 }

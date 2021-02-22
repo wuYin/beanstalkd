@@ -89,13 +89,13 @@ main(int argc, char **argv)
     progname = argv[0];
     setlinebuf(stdout);
 
-    // 1. parse args
+    // 1. 解析命令行参数
     optparse(&srv, argv+1);
     if (verbose) {
         printf("pid %d\n", getpid());
     }
 
-    // 2. create server socket, bind and listen
+    // 2. 创建 server socket 并绑定监听
     int r = make_server_socket(srv.addr, srv.port);
     if (r == -1) {
         twarnx("make_server_socket()");
@@ -104,17 +104,17 @@ main(int argc, char **argv)
 
     srv.sock.fd = r;
 
-    // 3. init global tube list multi set, create "default" tube
+    // 3. 初始化实例，创建 default tube
     prot_init();
 
     if (srv.user)
         su(srv.user);
     set_sig_handlers();
 
-    // 从 WAL 中恢复状态
+    // 4. 从 WAL 恢复
     srv_acquire_wal(&srv);
 
-    // 4. start server and do event loop
+    // 5. 启动 server 执行 eventloop
     srvserve(&srv);
     exit(0);
 }
