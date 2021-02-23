@@ -56,7 +56,7 @@ tube_dref(Tube *t)
 
     --t->refs;
     if (t->refs < 1)
-        tube_free(t); // NOTE: gc of tubes
+        tube_free(t); // 自动 gc
 }
 
 void

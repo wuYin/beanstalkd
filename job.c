@@ -22,7 +22,7 @@ _get_job_hash_index(uint64 job_id)
     return job_id % all_jobs_cap;
 }
 
-// 存储 jobid -> job 的哈希表
+// 存储 jobId -> job 到哈希表
 static void
 store_job(Job *j)
 {
@@ -30,7 +30,7 @@ store_job(Job *j)
 
     index = _get_job_hash_index(j->r.id);
 
-    j->ht_next = all_jobs[index]; // NOTE: store j as new head of idx linked list
+    j->ht_next = all_jobs[index]; // 拉链法将新 job j 置于哈希表表头
     all_jobs[index] = j;
     all_jobs_used++;
 
@@ -112,7 +112,6 @@ allocate_job(int body_size)
     return j;
 }
 
-// create job with fields, store into all_jobs
 Job *
 make_job_with_id(uint32 pri, int64 delay, int64 ttr,
                  int body_size, Tube *tube, uint64 id)
@@ -127,6 +126,7 @@ make_job_with_id(uint32 pri, int64 delay, int64 ttr,
 
     if (id) {
         j->r.id = id;
+        // 始终保持 next_id 最新可用
         if (id >= next_id) next_id = id + 1;
     } else {
         j->r.id = next_id++;
@@ -135,6 +135,7 @@ make_job_with_id(uint32 pri, int64 delay, int64 ttr,
     j->r.delay = delay;
     j->r.ttr = ttr;
 
+    // 记录 jobId -> job 关系
     store_job(j);
 
     TUBE_ASSIGN(j->tube, tube);

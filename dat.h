@@ -47,6 +47,8 @@ typedef int(FAlloc)(int, int);
 // A command can be at most LINE_BUF_SIZE chars, including "\r\n". This value
 // MUST be enough to hold the longest possible command ("pause-tube a{200} 4294967295\r\n")
 // or reply line ("USING a{200}\r\n").
+// 11 为最长 cmd： `pause-tube `
+// 12 为最长参数：` 4294967295`
 #define LINE_BUF_SIZE (11 + MAX_TUBE_NAME_LEN + 12)
 
 #define min(a,b) ((a)<(b)?(a):(b))
@@ -55,7 +57,7 @@ typedef int(FAlloc)(int, int);
 // NOTE: lower is more urgent
 #define URGENT_THRESHOLD 1024
 
-// The default maximum job size. // NOTE: 64KB
+// The default maximum job size. // 64KB
 #define JOB_DATA_SIZE_LIMIT_DEFAULT ((1 << 16) - 1)
 
 // The maximum value that job_data_size_limit can be set to via "-z".
@@ -113,7 +115,7 @@ int   heapinsert(Heap *h, void *x);
 void* heapremove(Heap *h, size_t k);
 
 
-// Socket attached into epoll event.data.ptr
+// attach 到 epoll 事件的 data.ptr 上，方便调用 handler
 struct Socket {
     // Descriptor for the socket.
     int    fd;
@@ -127,6 +129,7 @@ struct Socket {
     // added value is platform depended: on OSX it can be > 1.
     // Value of 1 - socket was already added to event notifications,
     // otherwise it is 0.
+    // 是否为第一次注册
     int    added;
 };
 
@@ -209,7 +212,7 @@ struct Jobrec {
     int64  delay;
     int64  ttr;
     int32  body_size;
-    int64  created_at;
+    int64  created_at; // 服务端创建 job 时间
 
     // deadline_at is a timestamp, in nsec, that points to:
     // * 1. time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
@@ -232,7 +235,7 @@ struct Job {
     // bookkeeping fields; these are in-memory only
     char pad[6];
     Tube *tube;                 // NOTE: tube which job belong to
-    Job *prev, *next;           // linked list of jobs // for buried linked list or reserved jobs linked list
+    Job *prev, *next;           // linked list of jobs // 用于连接 buried 或 reserved jobs 链表
     Job *ht_next;               // Next job in a hash table list // NOTE: using for tube heap linked list
     size_t heap_index;          // where is this job in its current heap // NOTE: index of it's tube heap
     File *file;
@@ -242,7 +245,7 @@ struct Job {
     int walresv;
     int walused;
 
-    char *body;                 // written separately to the wal
+    char *body;                 // written separately to the wal // ASCII job body
 };
 
 struct Tube {
@@ -376,25 +379,25 @@ struct Conn {
     char   state;       // see the STATE_* description
     char   type;        // combination of CONN_TYPE_* values
     Conn   *next;       // only used in epollq functions
-    Tube   *use;        // tube currently in use
+    Tube   *use;        // tube currently in use // put
     int64  tickat;      // time at which to do more work; determines pos in heap
     size_t tickpos;     // position in srv->conns, stale when in_conns=0
     byte   in_conns;    // 1 if the conn is in srv->conns heap, 0 otherwise
     Job    *soonest_job;// memoization of the soonest job // NOTE: the soonest expiring job in reserved jobs
     int    rw;          // currently want: 'r', 'w', or 'h'
 
-    // How long client should "wait" for the next job; -1 means forever.
+    // How long client should "wait" for the next job; -1 means forever. // 仅 reserve 为 -1
     int    pending_timeout;
 
     // Used to inform state machine that client no longer waits for the data.
     char   halfclosed;
 
-    // NOTE: request buffer
+    // 读请求 buffer
     char   cmd[LINE_BUF_SIZE];     // this string is NOT NUL-terminated
     size_t cmd_len;
     int    cmd_read;
 
-    // NOTE: response buffer
+    // 写请求 buffer
     char *reply;
     int  reply_sent;
     int  reply_len;
@@ -404,16 +407,16 @@ struct Conn {
     // while in_job_read is nonzero, we are in bit bucket mode and
     // in_job_read's meaning is inverted -- then it counts the bytes that
     // remain to be thrown away.
-    // NOTE: reading job
-    Job   *in_job;              // a job to be read from the client
-    int64 in_job_read;          // how many bytes in this job have been read so far
+    // in_job 为 NULL 但 in_job_read 不为 0，说明在 bucket 模式，丢弃读
+    Job   *in_job;              // a job to be read from the client // 读 job
+    int64 in_job_read;          // 已读或要读的 body 大小
 
     // NOTE: writing job
     Job *out_job;               // a job to be sent to the client
     int out_job_sent;           // how many bytes of *out_job were sent already
 
-    Ms  watch;                  // the set of watched tubes by the connection
-    Job reserved_jobs;          // linked list header
+    Ms  watch;                  // the set of watched tubes by the connection // 正在 watch 的 tube 集合
+    Job reserved_jobs;          // linked list header // 被 reserved 的 job 的链表
 };
 int  conn_less(void *ca, void *cb);
 void conn_setpos(void *c, size_t i);

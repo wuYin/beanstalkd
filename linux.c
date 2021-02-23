@@ -28,24 +28,20 @@ sockinit(void)
 }
 
 
-// NOTE: register specific events with epfd
+// 新增、删除或修改 socket 上注册的 event
 int
 sockwant(Socket *s, int rw)
 {
     int op;
 
-    // 1. no operations
     if (!s->added && !rw) {
         return 0;
     } else if (!s->added && rw) {
-        // 2. init and add events
         s->added = 1;
         op = EPOLL_CTL_ADD;
     } else if (!rw) {
-        // 3. added but no events
         op = EPOLL_CTL_DEL;
     } else {
-        // 4. added with new events
         op = EPOLL_CTL_MOD;
     }
 
@@ -58,8 +54,8 @@ sockwant(Socket *s, int rw)
         ev.events = EPOLLOUT;
         break;
     }
-    ev.events |= EPOLLRDHUP | EPOLLPRI; // add 2 more events
-    ev.data.ptr = s; // SET socket s into event data for fd
+    ev.events |= EPOLLRDHUP | EPOLLPRI;
+    ev.data.ptr = s; // event handler attach 到 event
 
     return epoll_ctl(epfd, op, s->fd, &ev);
 }
@@ -78,7 +74,7 @@ socknext(Socket **s, int64 timeout)
     }
 
     if (r > 0) {
-        *s = ev.data.ptr; // GET socket into s from event data
+        *s = ev.data.ptr;
         if (ev.events & (EPOLLHUP|EPOLLRDHUP)) { // connection closed
             return 'h';
         } else if (ev.events & EPOLLIN) {

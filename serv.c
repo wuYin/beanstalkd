@@ -59,7 +59,7 @@ srvserve(Server *s)
     // 3. 阻塞执行 event loop
     Socket *sock;
     for (;;) {
-        // 3.1 预估 epoll 下次事件发生时间
+        // 3.1 执行定时任务，预估 epoll 下次事件发生时间
         int64 period = prottick(s);
 
         // 3.2 等待有事件发生的 Socket
@@ -77,7 +77,6 @@ srvserve(Server *s)
 }
 
 
-// NOTE: handle client connection
 void
 srvaccept(Server *s, int ev)
 {

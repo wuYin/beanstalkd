@@ -99,12 +99,11 @@ size_t job_data_size_limit = JOB_DATA_SIZE_LIMIT_DEFAULT;
 #define MSG_JOB_TOO_BIG "JOB_TOO_BIG\r\n"
 
 // Connection can be in one of these states:
-// NOTE: server set to a conn came from client
 #define STATE_WANT_COMMAND  0  // conn expects a command from the client
 #define STATE_WANT_DATA     1  // conn expects a job data
 #define STATE_SEND_JOB      2  // conn sends job to the client
 #define STATE_SEND_WORD     3  // conn sends a line reply
-#define STATE_WAIT          4  // client awaits for the job reservation
+#define STATE_WAIT          4  // client awaits for the job reservation // reserve 等待中
 #define STATE_BITBUCKET     5  // conn discards content
 #define STATE_CLOSE         6  // conn should be closed
 #define STATE_WANT_ENDLINE  7  // skip until the end of a line
@@ -284,11 +283,11 @@ static Job *remove_buried_job(Job *j);
 // epollq_add schedules connection c in the s->conns heap, adds c
 // to the epollq list to change expected operation in event notifications.
 // rw='w' means to notify when socket is writeable, 'r' - readable, 'h' - closed.
-// refresh tickat for c in server.conns heap
+// 为 c 注册新的 epoll 事件，加入 epoll 队列队头
 static void
 epollq_add(Conn *c, char rw) {
-    c->rw = rw; // tag next event for c
-    connsched(c);
+    c->rw = rw;
+    connsched(c); // 加入 s->conns 队列重新调度
     c->next = epollq;
     epollq = c;
 }
@@ -316,7 +315,7 @@ epollq_rmconn(Conn *c)
 
 // Propagate changes to event notification mechanism about expected operations
 // in connections' sockets. Clear the epollq list.
-// NOTE: traverse all dirty connections and register read, write event for it
+// 遍历所有连接，注册最新的事件
 static void
 epollq_apply()
 {
@@ -340,7 +339,7 @@ epollq_apply()
 #define reply_serr(c, e) \
     (twarnx("server error: %s", (e)), reply_msg((c), (e)))
 
-// register write response to c into epoll_queue
+// 将长为 len 的 line 写入 conn，并标记为 state 状态
 static void
 reply(Conn *c, char *line, int len, int state)
 {
@@ -350,7 +349,7 @@ reply(Conn *c, char *line, int len, int state)
     epollq_add(c, 'w');
 
     c->reply = line;
-    c->reply_len = len;
+    c->reply_len = len; // c->reply 长度
     c->reply_sent = 0;
     c->state = state;
     if (verbose >= 2) {
@@ -397,7 +396,7 @@ reply_job(Conn *c, Job *j, const char *msg)
 // remove_waiting_conn unsets CONN_TYPE_WAITING for the connection,
 // removes it from the waiting_conns set of every tube it's watching.
 // Noop if connection is not waiting.
-// 将 c 从她所有的 watching tubes 的 waiting conn 集合中移除
+// 将 conn 从其 watch 的所有 tube 的 waiting conn 集合中移除
 void
 remove_waiting_conn(Conn *c)
 {
@@ -497,8 +496,7 @@ process_queue()
 
 // soonest_delayed_job returns the delayed job
 // with the smallest deadline_at among all tubes.
-// NOTE: traverse all tube delayed top job in heap, compare one by one to get soonest delayed end job
-// 遍历全局 tube
+// 遍历全局 tube 逐个比较 delay 堆堆顶，找出最快到期的 job
 static Job *
 soonest_delayed_job()
 {
@@ -779,6 +777,7 @@ check_err(Conn *c, const char *s)
 
 /* Scan the given string for the sequence "\r\n" and return the line length.
  * Always returns at least 2 if a match is found. Returns 0 if no match. */
+// 扫描长为 size 的字符串 s，寻找 \r\n 结尾的字符串长度
 static size_t
 scan_line_end(const char *s, int size)
 {
@@ -799,8 +798,9 @@ scan_line_end(const char *s, int size)
 static int
 which_cmd(Conn *c)
 {
-// define macro and compare cmd one by one use the macro
+// 定义宏高效展开比较
 #define TEST_CMD(s,c,o) if (strncmp((s), (c), CONSTSTRLEN(c)) == 0) return (o);
+    // 逐个比较 c->cmd 是否有 CMD_X 前缀
     TEST_CMD(c->cmd, CMD_PUT, OP_PUT);
     TEST_CMD(c->cmd, CMD_PEEKJOB, OP_PEEKJOB);
     TEST_CMD(c->cmd, CMD_PEEK_READY, OP_PEEK_READY);
@@ -829,11 +829,10 @@ which_cmd(Conn *c)
     return OP_UNKNOWN;
 }
 
-// not ok: skip discard, bit bucket mode
-// ok: after put cmd, after dispatch
 /* Copy up to body_size trailing bytes into the job, then the rest into the cmd
  * buffer. If c->in_job exists, this assumes that c->in_job->body is empty.
  * This function is idempotent(). */
+// 手动将 cmd 中预读的部分 body 数据归还给 body
 static void
 fill_extra_data(Conn *c)
 {
@@ -843,25 +842,28 @@ fill_extra_data(Conn *c)
         return; /* we don't have a complete command */
 
     /* how many extra bytes in header did we forward read? */
+    // cmd 之后预读了多少字节
     int64 extra_bytes = c->cmd_read - c->cmd_len;
 
     int64 job_data_bytes = 0;
     /* how many bytes should we put into the job body? */
     if (c->in_job) {
-        // 1. copy part of job data which in header tail into job body
+        // 1. 正常 put 新 job
+        // 将预读字节中，本属于 job 的字节拷贝到 body
         job_data_bytes = min(extra_bytes, c->in_job->r.body_size);
         memcpy(c->in_job->body, c->cmd + c->cmd_len, job_data_bytes);
         c->in_job_read = job_data_bytes;
     } else if (c->in_job_read) {
-        // 2. we already read part of job data because it's part of header
-        // now need reduce this part
+        // 2. 进入 bucket 模式
+        // 将预读字节中，不合规范的字节丢弃
         /* we are in bit-bucket mode, throwing away data */
         job_data_bytes = min(extra_bytes, c->in_job_read);
         c->in_job_read -= job_data_bytes;
     }
 
-    // 3. TODO: reset cmd_read to length which before
     /* how many bytes are left to go into the future cmd? */
+    // 3. 预读字节中还有多少是属于下一个 cmd 的（如连续 put 2 个 body 很短的 job）
+    // 若预读了下一个 cmd 则拷贝到 c->cmd
     int64 cmd_bytes = extra_bytes - job_data_bytes;
     memmove(c->cmd, c->cmd + c->cmd_len + job_data_bytes, cmd_bytes);
     c->cmd_read = cmd_bytes;
@@ -870,13 +872,14 @@ fill_extra_data(Conn *c)
 
 #define skip(conn,n,msg) (_skip(conn, n, msg, CONSTSTRLEN(msg)))
 
-// skip n bytes in c, reply msg to client, like:
-// skip(c, (int64)body_size+2, JOB_TOO_BIG)
+// 跳过 c 接下来发送的 n 字节，并回复 msg（job 过大或 oom）
 static void
 _skip(Conn *c, int64 n, char *msg, int msglen)
 {
     /* Invert the meaning of in_job_read while throwing away data -- it
      * counts the bytes that remain to be thrown away. */
+    // 将 in_job 字段置为 NULL，但已读不为 0
+    // 此时 in_job_read 意思翻转，标识还有多少非法字节，需要丢弃
     c->in_job = 0;
     c->in_job_read = n; // now we need read and discard n bytes
     fill_extra_data(c);
@@ -1066,6 +1069,7 @@ read_u64(uint64 *num, const char *buf, char **end)
 }
 
 // Indentical to read_u64() but instead reads into uint32.
+// 从 buf 开始解析 u32 到 num，解析结束地址存于 end
 static int
 read_u32(uint32 *num, const char *buf, char **end)
 {
@@ -1104,7 +1108,7 @@ read_duration(int64 *duration, const char *buf, char **end)
     r = read_u32(&dur_sec, buf, end);
     if (r)
         return r;
-    *duration = ((int64) dur_sec) * 1000000000;
+    *duration = ((int64) dur_sec) * 1000000000; // duration 单位为 s 手动转为 ns
     return 0;
 }
 
@@ -1136,6 +1140,7 @@ wait_for_job(Conn *c, int timeout)
     c->pending_timeout = timeout;
 
     // only care if they hang up
+    // 等待过程中只关心 client 关闭连接
     epollq_add(c, 'h');
 }
 
@@ -1315,6 +1320,8 @@ is_valid_tube(const char *name, size_t max)
         name[0] != '-';
 }
 
+// 至此 process_io 已读取最长 cmd 长度字节数
+// 如 put 命令必定已将 body 也预读到了 c->cmd 内存区域，需手动分离到 body 中
 static void
 dispatch_cmd(Conn *c)
 {
@@ -1345,9 +1352,8 @@ dispatch_cmd(Conn *c)
     }
 
     switch (type) {
-    // 1. PUT
     case OP_PUT:
-        // 1.1 解析字段
+        // 1.1 逐个解析字段
         if (read_u32(&pri, c->cmd + 4, &delay_buf) ||
             read_duration(&delay, delay_buf, &ttr_buf) ||
             read_duration(&ttr, ttr_buf, &size_buf) ||
@@ -1369,11 +1375,9 @@ dispatch_cmd(Conn *c)
             reply_msg(c, MSG_BAD_FORMAT);
             return;
         }
-
         connsetproducer(c);
-
         if (ttr < 1000000000) {
-            ttr = 1000000000; // 默认的 ttr 是 1s
+            ttr = 1000000000; // 默认 ttr 1s
         }
 
         // 1.3 创建新的 job
@@ -1387,7 +1391,7 @@ dispatch_cmd(Conn *c)
             return;
         }
 
-        // 1.4 将 header 中多余读取到的数据挪到 job body 中
+        // 1.4 将 cmd 中预读数据挪到 job body 中
         fill_extra_data(c);
 
         // 1.5 如果已读取到完整的 job，则尝试入队
@@ -1441,6 +1445,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // 判断 buried 链表是否为空
         if (buried_job_p(c->use))
             j = job_copy(c->use->buried.next);
         else
@@ -1490,15 +1495,15 @@ dispatch_cmd(Conn *c)
         op_ct[type]++;
         connsetworker(c);
 
-        // 1. if conn already reserved jobs, and soonest job now crossed SAFE_MARGIN
-        // 2. and none of conn watching tubes have ready job
+        // 暂无新 job，且有 job reserved 时效已超过 TTR 时限，则回复 DDL（让 conn 有机会 touch）
         if (conndeadlinesoon(c) && !conn_ready(c)) {
             reply_msg(c, MSG_DEADLINE_SOON);
             return;
         }
 
         /* try to get a new job for this guy */
-        wait_for_job(c, timeout);
+        wait_for_job(c, timeout); // 永久阻塞 timeout 为 -1
+        // 立刻分发 job
         process_queue();
         return;
 
@@ -1906,8 +1911,8 @@ dispatch_cmd(Conn *c)
 
 // 连接超时有 3 种 case
 // 1. TTR 到期
-// 2. reserved job 进去了 DEADLINE_SOON
-// 3. reserve 等到超时
+// 2. reserved job 进入 DEADLINE_SOON
+// 3. reserve 等待超时
 static void
 conn_timeout(Conn *c)
 {
@@ -1976,7 +1981,6 @@ conn_want_command(Conn *c)
     c->state = STATE_WANT_COMMAND;
 }
 
-// read or write to conn and convert state
 static void
 conn_process_io(Conn *c)
 {
@@ -1985,11 +1989,11 @@ conn_process_io(Conn *c)
     Job *j;
     struct iovec iov[2];
 
+  // 状态变更控制 io
   switch (c->state) {
-    // 1. expect a command read from client
-    // -> STATE_CLOSE: client closed conn
-    // -> STATE_WANT_ENDLINE: read non-complete cmd
-    // --> STATE_WANT_COMMAND: keep same state if read a complete cmd
+    // 1. 等待 client 发来新命令
+    // -> STATE_WANT_ENDLINE: 读到不完整命令
+    // -> STATE_WANT_COMMAND: 读到完整命令
     case STATE_WANT_COMMAND:
         r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
         if (r == -1) {
@@ -2004,7 +2008,7 @@ conn_process_io(Conn *c)
         c->cmd_read += r;
         c->cmd_len = scan_line_end(c->cmd, c->cmd_read);
         if (c->cmd_len) {
-            // 1.1 ok to dispatch the cmd
+            // 1.1 读到完整命令
             // We found complete command line. Bail out to h_conn.
             return;
         }
@@ -2012,7 +2016,7 @@ conn_process_io(Conn *c)
         // c->cmd_read > LINE_BUF_SIZE can't happen
 
         if (c->cmd_read == LINE_BUF_SIZE) {
-            // 1.2 non-complete cmd, discard it and move to STATE_WANT_ENDLINE state
+            // 1.2 命令过长不完整则丢弃
             // Command line too long.
             // Put connection into special state that discards
             // the command line until the end line is found.
@@ -2022,8 +2026,7 @@ conn_process_io(Conn *c)
         // We have an incomplete line, so just keep waiting.
         return;
 
-    // 2. conn readable again, reply BAD_FORMAT if finally reach end
-    // -> STATE_CLOSE: client closed conn
+    // 2. conn 已被标记为命令不完整，若读到 CRLF 则返回 BAD_FORMAT
     case STATE_WANT_ENDLINE:
         r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
         if (r == -1) {
@@ -2052,13 +2055,13 @@ conn_process_io(Conn *c)
         }
         return;
 
-    // 3. OOM or msg too big such as c->in_job_read > 60MB, now we need SKIP current body
-    // -> STATE_CLOSE: client closed conn
-    // -> STATE_SEND_WORD: finally skipped ALL invalid bytes
-    // <--> STATE_BITBUCKET: not read all job body yet, may need to keep same state to proceeding read remain bytes
+    // 3. OOM 或 job body 过大（> 60MB）则跳过当前 body
+    // -> STATE_SEND_WORD: 终于读完废弃 job body，准备回复错误信息
+    // -> STATE_BITBUCKET: 还没读完
     case STATE_BITBUCKET: {
         /* Invert the meaning of in_job_read while throwing away data -- it
          * counts the bytes that remain to be thrown away. */
+        // 尽可能多地读 to_read 字节
         static char bucket[BUCKET_BUF_SIZE];
         to_read = min(c->in_job_read, BUCKET_BUF_SIZE);
         r = read(c->sock.fd, bucket, to_read);
@@ -2081,12 +2084,12 @@ conn_process_io(Conn *c)
         return;
     }
 
-    // 4. expect job body data
-    // -> STATE_CLOSE: client closed conn
-    // <--> STATE_WANT_DATA: not read all job body yet, may need to keep same state to proceeding read remain bytes
+    // 4. 读取 client 发来 job body
+    // -> STATE_WANT_DATA: 继续读取未完的 job body
     case STATE_WANT_DATA:
         j = c->in_job;
 
+        // 读取剩余字节数
         r = read(c->sock.fd, j->body + c->in_job_read, j->r.body_size -c->in_job_read);
         if (r == -1) {
             check_err(c, "read()");
@@ -2100,14 +2103,12 @@ conn_process_io(Conn *c)
         c->in_job_read += r; /* we got some bytes */
 
         /* (j->in_job_read > j->r.body_size) can't happen */
-
         maybe_enqueue_incoming_job(c);
         return;
 
-    // 5. reply response msg
-    // -> STATE_CLOSE: client closed conn
-    // <--> STATE_SEND_WORD: not write all resp yet, may need to keep same state to proceeding write remain bytes
-    // -> STATE_WANT_COMMAND: reply done
+    // 5. 回复 msg
+    // -> STATE_SEND_WORD: 未写完，继续写
+    // -> STATE_WANT_COMMAND: 写完，等待新命令
     case STATE_SEND_WORD:
         r= write(c->sock.fd, c->reply + c->reply_sent, c->reply_len - c->reply_sent);
         if (r == -1) {
@@ -2122,7 +2123,7 @@ conn_process_io(Conn *c)
         c->reply_sent += r; /* we got some bytes */
 
         /* (c->reply_sent > c->reply_len) can't happen */
-
+        // 回复完毕，等待新命令
         if (c->reply_sent == c->reply_len) {
             conn_want_command(c);
             return;
@@ -2131,13 +2132,13 @@ conn_process_io(Conn *c)
         /* otherwise we sent an incomplete reply, so just keep waiting */
         break;
 
-    // 6. reply job body data
-    // -> STATE_CLOSE: client closed conn
-    // <-> STATE_SEND_JOB: not write all job body yet, may need to keep same state to proceeding write remain bytes.
-    // -> STATE_WANT_COMMAND: job write done, try to receive new cmd
+    // 6. 回复 job body
+    // -> STATE_SEND_JOB: 没写完，继续写
+    // -> STATE_WANT_COMMAND: 写完，等待新命令
     case STATE_SEND_JOB:
         j = c->out_job;
 
+        // 同时写入 header, body 两个缓冲区
         iov[0].iov_base = (void *)(c->reply + c->reply_sent);
         iov[0].iov_len = c->reply_len - c->reply_sent; /* maybe 0 */
         iov[1].iov_base = j->body + c->out_job_sent;
@@ -2155,9 +2156,11 @@ conn_process_io(Conn *c)
 
         /* update the sent values */
         c->reply_sent += r;
+        // 先写 cmd 才会写 body
         if (c->reply_sent >= c->reply_len) {
+            // cmd 已写完，余后部分是 body
             c->out_job_sent += c->reply_sent - c->reply_len;
-            c->reply_sent = c->reply_len; // reply write done
+            c->reply_sent = c->reply_len;
         }
 
         /* (c->out_job_sent > j->r.body_size) can't happen */
@@ -2167,16 +2170,17 @@ conn_process_io(Conn *c)
             if (verbose >= 2) {
                 printf(">%d job %"PRIu64"\n", c->sock.fd, j->r.id);
             }
+            // 写完毕，等待新命令
             conn_want_command(c);
             return;
         }
 
         /* otherwise we sent incomplete data, so just keep waiting */
+        // 保持状态下一轮继续写
         break;
 
-    // 7. reserve waiting for new job
+    // 7. reserving
     case STATE_WAIT:
-        // if client close conn, remove it from waiting set
         if (c->halfclosed) {
             c->pending_timeout = -1;
             remove_waiting_conn(c);
@@ -2190,7 +2194,6 @@ conn_process_io(Conn *c)
 #define want_command(c) ((c)->sock.fd && ((c)->state == STATE_WANT_COMMAND))
 #define cmd_data_ready(c) (want_command(c) && (c)->cmd_read)
 
-// 处理连接请求与响应
 static void
 h_conn(const int fd, const short which, Conn *c)
 {
@@ -2205,13 +2208,11 @@ h_conn(const int fd, const short which, Conn *c)
         c->halfclosed = 1;
     }
 
-    // 1. 根据 conn 的状态决定 IO 的读写操作
+    // 1. 读写 client socket
     conn_process_io(c);
 
-    // 2. 读取到命令后执行分发
-    // TODO: scan again may unnecessary // while (cmd_data_ready(c)) {
+    // 2. 分发 handler
     while (cmd_data_ready(c) && (c->cmd_len = scan_line_end(c->cmd, c->cmd_read))) {
-        // if read a complete cmd, dispatch to corresponding cmd handler
         dispatch_cmd(c);
         fill_extra_data(c);
     }
@@ -2229,7 +2230,7 @@ prothandle(Conn *c, int ev)
 }
 
 // prottick returns nanoseconds till the next work.
-// 1. 将 delay 到期的 job 挪到 ready 堆上
+// 定时任务
 int64
 prottick(Server *s)
 {
@@ -2246,38 +2247,37 @@ prottick(Server *s)
     // 1. 遍历 tubes 找出最快到期的 job，过期则从 delay 堆挪到 ready 堆
     while ((j = soonest_delayed_job())) {
         d = j->r.deadline_at - now;
-        // 1.1 若最快到期的 job 都未到期，则忽略
         if (d > 0) {
+            // 1.1 均未到期
             period = min(period, d);
             break;
         }
-        // 1.2 若到期则挪到 ready 堆上
-        heapremove(&j->tube->delay, j->heap_index);
+        // 1.2 已到期则挪到 ready 堆上
+        heapremove(&j->tube->delay, j->heap_index); // job 用 heapIdx 反溯删除
         int r = enqueue_job(s, j, 0, 0);
         if (r < 1)
+            // 兜底 OOM 写入 buried
             bury_job(s, j, 0);  /* out of memory */
     }
 
     // Unpause every possible tube and process the queue.
     // Capture the smallest period from the soonest pause deadline.
-    // 2. find soonest expired paused tube from all tubes
+    // 2. 遍历查找 pause 最快到期的 tube
     size_t i;
     for (i = 0; i < tubes.len; i++) {
         t = tubes.items[i];
         d = t->unpause_at - now;
-        // 2.1 if pause expired, send tube's ready job to waiting conns
         if (t->pause && d <= 0) {
             t->pause = 0;
             process_queue();
         } else if (d > 0) {
-            // 2.2 update period
             period = min(period, d);
         }
     }
 
     // Process connections with pending timeouts. Release jobs with expired ttr.
     // Capture the smallest period from the soonest connection.
-    // 3. 找出最快有过期事件（TTR 到期，reserve 超时）的连接
+    // 3. 找出最快有过期事件（TTR 到期，reserve 超时）的 conn
     while (s->conns.len) {
         Conn *c = s->conns.data[0];
         d = c->tickat - now;
@@ -2286,26 +2286,24 @@ prottick(Server *s)
             period = min(period, d);
             break;
         }
-        // 3.2 已超时则移除
+        // 3.2 已超时则移除并处理
         heapremove(&s->conns, 0);
         c->in_conns = 0;
         conn_timeout(c);
     }
 
-    // 4. register rw event for connections
+    // 4. 向各 conn 注册最新 epoll 事件
     epollq_apply();
-
     return period;
 }
 
-// NOTE: when server socket is readable, handle socket fd with `which` event
+// 当 server socket 可读时，建立连接并配置为 conn
 void
 h_accept(const int fd, const short which, Server *s)
 {
     UNUSED_PARAMETER(which);
     struct sockaddr_storage addr;
 
-    // 1. accept client socket fd
     socklen_t addrlen = sizeof addr;
     int cfd = accept(fd, (struct sockaddr *)&addr, &addrlen);
     if (cfd == -1) {
@@ -2317,7 +2315,6 @@ h_accept(const int fd, const short which, Server *s)
         printf("accept %d\n", cfd);
     }
 
-    // 2. config client fd non-block
     int flags = fcntl(cfd, F_GETFL, 0);
     if (flags < 0) {
         twarn("getting flags");
@@ -2340,8 +2337,8 @@ h_accept(const int fd, const short which, Server *s)
         return;
     }
 
-    // 3. create conn with default tube
-    // conn.state init to STATE_WANT_COMMAND in accept
+    // wrap client fd 为 conn 并 use/watch default tube
+    // 标记为 want cmd 状态
     Conn *c = make_conn(cfd, STATE_WANT_COMMAND, default_tube, default_tube);
     if (!c) {
         twarnx("make_conn() failed");
@@ -2354,10 +2351,10 @@ h_accept(const int fd, const short which, Server *s)
     }
     c->srv = s;
     c->sock.x = c;
-    c->sock.f = (Handle)prothandle; // 4.1 client conn socket handler is protocol_handler
+    c->sock.f = (Handle)prothandle;
     c->sock.fd = cfd;
 
-    r = sockwant(&c->sock, 'r'); // 4.2 and register read event
+    r = sockwant(&c->sock, 'r'); // 连接成功后注册读事件
     if (r == -1) {
         twarn("sockwant");
         close(cfd);
