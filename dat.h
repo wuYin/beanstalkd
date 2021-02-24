@@ -68,7 +68,6 @@ typedef int(FAlloc)(int, int);
 #define DEFAULT_FSYNC_MS 50
 
 // Use this macro to designate unused parameters in functions.
-// NOTE: convert x to void, to pass unused var check
 #define UNUSED_PARAMETER(x) (void)(x)
 
 // version is defined in vers.c, see vers.sh for details.
@@ -214,10 +213,9 @@ struct Jobrec {
     int64  created_at; // 服务端创建 job 时间
 
     // deadline_at is a timestamp, in nsec, that points to:
-    // * 1. time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
-    // * 2. time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> ready
     // * undefined otherwise.
-    // 1. delay job 到期时间戳
+    // 1. delay 到期时间戳，delay 到 ready
+    // 2. TTR 到期时间戳，reserved 到 ready
     int64  deadline_at;
 
     uint32 reserve_ct;

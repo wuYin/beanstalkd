@@ -59,6 +59,7 @@ make_inet_socket(char *host, char *port)
             continue;
         }
 
+        // 若 socket 无数据可读则不阻塞
         r = set_nonblocking(fd);
         if (r == -1) {
             close(fd);

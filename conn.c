@@ -218,7 +218,7 @@ conndeadlinesoon(Conn *c)
     int64 t = nanoseconds();
     Job *j = connsoonestjob(c);
 
-    // reserve 时效超过 TTR
+    // reserved 超时时间进入 TTR safe margin
     return j && t >= j->r.deadline_at - SAFETY_MARGIN;
 }
 

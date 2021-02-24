@@ -315,7 +315,7 @@ epollq_rmconn(Conn *c)
 
 // Propagate changes to event notification mechanism about expected operations
 // in connections' sockets. Clear the epollq list.
-// 遍历所有连接，注册最新的事件
+// 刷新所有 conn 的注册事件
 static void
 epollq_apply()
 {
@@ -887,7 +887,7 @@ _skip(Conn *c, int64 n, char *msg, int msglen)
     /* Invert the meaning of in_job_read while throwing away data -- it
      * counts the bytes that remain to be thrown away. */
     // 将 in_job 字段置为 NULL，但已读不为 0
-    // 此时 in_job_read 意思翻转，标识还有多少非法字节，需要丢弃
+    // 此时 in_job_read 含义翻转，标识还有多少非法字节要丢弃
     c->in_job = 0;
     c->in_job_read = n; // now we need read and discard n bytes
     fill_extra_data(c);
@@ -1931,9 +1931,9 @@ dispatch_cmd(Conn *c)
  *
  * If any of these happen, we must do the appropriate thing. */
 
-// 连接超时有 3 种 case
+// 连接超时有 3 种
 // 1. TTR 到期
-// 2. reserved job 进入 DEADLINE_SOON
+// 2. 进入 TTR 到期之前的 safe margin
 // 3. reserve 等待超时
 static void
 conn_timeout(Conn *c)
@@ -1942,14 +1942,15 @@ conn_timeout(Conn *c)
     Job *j;
 
     /* Check if the client was trying to reserve a job. */
-    // 1. 检查 c 是否在等待 reserve
+    // 1.1 c 在等待 reserve，实际上此时已经 reserve timeout 了
+    // 1.2 或 reserved 已进入 TTR safe margin
+    // 以上都要回复 DDL
     if (conn_waiting(c) && conndeadlinesoon(c))
         should_timeout = 1;
 
     /* Check if any reserved jobs have run out of time. We should do this
      * whether or not the client is waiting for a new reservation. */
     // 2. 检查是否有 TTR 已到期的 job
-    // 不管 client 是否处于 waiting 状态都必须检查，才能让此 job 分发给其他 waitingConn
     while ((j = connsoonestjob(c))) {
         if (j->r.deadline_at >= nanoseconds())
             break;
@@ -1964,7 +1965,7 @@ conn_timeout(Conn *c)
 
         timeout_ct++; /* stats */
         j->r.timeout_ct++;
-        // 2.1 将已到期 job 放回 ready 堆
+        // 2.1 将已到期 job 放回 ready 堆，才能分发给其他 conn
         int r = enqueue_job(c->srv, remove_this_reserved_job(c, j), 0, 0);
         if (r < 1)
             bury_job(c->srv, j, 0); /* out of memory, so bury it */
@@ -1976,6 +1977,7 @@ conn_timeout(Conn *c)
         remove_waiting_conn(c);
         reply_msg(c, MSG_DEADLINE_SOON);
     } else if (conn_waiting(c) && c->pending_timeout >= 0) {
+        // reserve timeout 则重置为永久阻塞等待
         c->pending_timeout = -1;
         remove_waiting_conn(c);
         reply_msg(c, MSG_TIMED_OUT);
@@ -2077,7 +2079,7 @@ conn_process_io(Conn *c)
         }
         return;
 
-    // 3. OOM 或 job body 过大（> 60MB）则跳过当前 body
+    // 3. OOM 或 job body 过大（> 64Kb）则跳过当前 body
     // -> STATE_SEND_WORD: 终于读完废弃 job body，准备回复错误信息
     // -> STATE_BITBUCKET: 还没读完
     case STATE_BITBUCKET: {
@@ -2160,7 +2162,7 @@ conn_process_io(Conn *c)
     case STATE_SEND_JOB:
         j = c->out_job;
 
-        // 同时写入 header, body 两个缓冲区
+        // 同时写入 reply msg, body 两个缓冲区
         iov[0].iov_base = (void *)(c->reply + c->reply_sent);
         iov[0].iov_len = c->reply_len - c->reply_sent; /* maybe 0 */
         iov[1].iov_base = j->body + c->out_job_sent;
@@ -2266,7 +2268,7 @@ prottick(Server *s)
 
     // Enqueue all jobs that are no longer delayed.
     // Capture the smallest period from the soonest delayed job.
-    // 1. 遍历 tubes 找出最快到期的 job，过期则从 delay 堆挪到 ready 堆
+    // 1. 遍历 tubes 找出已到期的 job，过期则从 delay 堆挪到 ready 堆
     while ((j = soonest_delayed_job())) {
         d = j->r.deadline_at - now;
         if (d > 0) {
@@ -2278,7 +2280,6 @@ prottick(Server *s)
         heapremove(&j->tube->delay, j->heap_index); // job 用 heapIdx 反溯删除
         int r = enqueue_job(s, j, 0, 0);
         if (r < 1)
-            // 兜底 OOM 写入 buried
             bury_job(s, j, 0);  /* out of memory */
     }
 
