@@ -54,7 +54,6 @@ typedef int(FAlloc)(int, int);
 #define min(a,b) ((a)<(b)?(a):(b))
 
 // Jobs with priority less than URGENT_THRESHOLD are counted as urgent.
-// NOTE: lower is more urgent
 #define URGENT_THRESHOLD 1024
 
 // The default maximum job size. // 64KB
@@ -218,6 +217,7 @@ struct Jobrec {
     // * 1. time when job will become ready for delayed job,   // NOTE: delay count down, delayed  --> ready
     // * 2. time when TTR is about to expire for reserved job, // NOTE: TTR   count down, reserved --> ready
     // * undefined otherwise.
+    // 1. delay job 到期时间戳
     int64  deadline_at;
 
     uint32 reserve_ct;
@@ -241,7 +241,7 @@ struct Job {
     File *file;
     Job  *fnext;
     Job  *fprev;
-    void *reserver;
+    void *reserver; // job 只能被 reserver delete/touch
     int walresv;
     int walused;
 
@@ -261,7 +261,7 @@ struct Tube {
     uint using_ct;
     uint watching_ct;
 
-    int64 pause;      // 暂停时长 ns
+    int64 pause;      // 是否被暂停
     int64 unpause_at; // 恢复时间戳 ns
 };
 
@@ -383,7 +383,7 @@ struct Conn {
     int64  tickat;      // time at which to do more work; determines pos in heap
     size_t tickpos;     // position in srv->conns, stale when in_conns=0
     byte   in_conns;    // 1 if the conn is in srv->conns heap, 0 otherwise
-    Job    *soonest_job;// memoization of the soonest job // NOTE: the soonest expiring job in reserved jobs
+    Job    *soonest_job;// memoization of the soonest job // 在 reserved jobs 中 TTR 最快到期的 job
     int    rw;          // currently want: 'r', 'w', or 'h'
 
     // How long client should "wait" for the next job; -1 means forever. // 仅 reserve 为 -1

@@ -195,6 +195,7 @@ connsoonestjob(Conn *c)
     return c->soonest_job;
 }
 
+// 记录本次 reserve，更新 job 状态
 void
 conn_reserve_job(Conn *c, Job *j) {
     j->tube->stat.reserved_ct++;
@@ -205,6 +206,7 @@ conn_reserve_job(Conn *c, Job *j) {
     job_list_insert(&c->reserved_jobs, j);
     j->reserver = c;
     c->pending_timeout = -1;
+    // 根据新到期 ttr 更新 soonestjob 字段
     conn_set_soonestjob(c, j);
 }
 

@@ -182,9 +182,9 @@ job_pri_less(void *ja, void *jb)
 {
     Job *a = (Job *)ja;
     Job *b = (Job *)jb;
-    if (a->r.pri < b->r.pri) return 1; // priority 小，优先级高
+    if (a->r.pri < b->r.pri) return 1; // pri 小，优先级高
     if (a->r.pri > b->r.pri) return 0;
-    return a->r.id < b->r.id;
+    return a->r.id < b->r.id; // pri 相等则比较 jobId
 }
 
 // NOTE: job delay comparator for tube delay heap, smaller delay, smaller id

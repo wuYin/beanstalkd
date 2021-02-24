@@ -433,7 +433,7 @@ enqueue_waiting_conn(Conn *c)
 // returns the next ready job with the smallest priority.
 // If jobs has the same priority it picks the job with smaller id.
 // All tubes with expired pause are unpaused.
-// 遍历所有 tube 找出下一个最优先的 job
+// 遍历所有 tube 找出下一个 priority 和 jobId 最低即最优先的 job
 static Job *
 next_awaited_job(int64 now)
 {
@@ -443,12 +443,14 @@ next_awaited_job(int64 now)
     for (i = 0; i < tubes.len; i++) {
         Tube *t = tubes.items[i];
         if (t->pause) {
-            if (t->unpause_at > now)
+            if (t->unpause_at > now) // 忽略被 pause 的 tube
                 continue;
             t->pause = 0;
         }
+        // job 可被下发：tube 有 ready job 而且有等待 conn
         if (t->waiting_conns.len && t->ready.len) {
             Job *candidate = t->ready.data[0];
+            // 筛选最高优先级
             if (!j || job_pri_less(candidate, j)) {
                 j = candidate;
             }
@@ -459,14 +461,15 @@ next_awaited_job(int64 now)
 
 // process_queue performs reservation for every jobs that is awaited for.
 // traverse all tubes, find all ready job which attached a waiting conn
-// 按优先级顺序，将所有 tube 的所有 ready job 轮询分发给该 tube 上 waiting 的连接
+// 下发 ready job
+// 将所有 tube 的所有 ready job 轮询其 waiting conns 逐个出队下发
 static void
 process_queue()
 {
     Job *j = NULL;
     int64 now = nanoseconds();
 
-    // 1. 从全局 tubes 列表中按 [priority, id] 比较找出最紧急处理的 Job
+    // 1. 从所有 tube 逐一筛选找出最高优先级 ready job
     while ((j = next_awaited_job(now))) {
         heapremove(&j->tube->ready, j->heap_index);
         ready_ct--;
@@ -475,8 +478,8 @@ process_queue()
             j->tube->stat.urgent_ct--;
         }
 
-        // 2. 顺序地从该 tube 的等待连接中取出一个 conn
-        Conn *c = ms_take(&j->tube->waiting_conns); // sequential even dispatch job to all waiting conns
+        // 2. 取出 job 所在 tube 等待最久的 conn
+        Conn *c = ms_take(&j->tube->waiting_conns);
         if (c == NULL) {
             twarnx("waiting_conns is empty");
             continue;
@@ -484,12 +487,12 @@ process_queue()
         global_stat.reserved_ct++;
 
         // means same time only ONE watching tube can delivery job to one conn
-        // 2. 将 c 从它 watch 的所有 tube 的 waiting 中全部移除
+        // 3. conn 要 reserve job，将其从 watch tubes 等待队列中移除，即不再接收新 job
         remove_waiting_conn(c);
         // if j is more urgent, set it to soonest_job
-        // 3. 将 job 插入到 c.reserved_job 链表中
+        // 4. 记录到 reserved_job 链表
         conn_reserve_job(c, j);
-        // 4. 响应 reserve 命令
+        // 5. 最终回复 job
         reply_job(c, j, MSG_RESERVED);
     }
 }
@@ -524,16 +527,15 @@ enqueue_job(Server *s, Job *j, int64 delay, char update_store)
 {
     int r;
 
+    // 入队
     j->reserver = NULL;
     if (delay) {
-        // 1. if delay, insert to delay heap
         j->r.deadline_at = nanoseconds() + delay;
         r = heapinsert(&j->tube->delay, j);
         if (!r)
             return 0;
         j->r.state = Delayed;
     } else {
-        // 2. if no delay, insert to ready heap
         r = heapinsert(&j->tube->ready, j);
         if (!r)
             return 0;
@@ -555,6 +557,7 @@ enqueue_job(Server *s, Job *j, int64 delay, char update_store)
     // The call below makes this function do too much.
     // TODO: refactor this call outside so the call is explicit (not hidden)?
     // after new job enqueue, now dispatch it to one worker conn
+    // 有新 job 入队就尝试下发
     process_queue();
     return 1;
 }
@@ -614,6 +617,7 @@ kick_buried_job(Server *s, Job *j)
     remove_buried_job(j);
 
     j->r.kick_ct++;
+    // 被 kick 后重新入队
     r = enqueue_job(s, j, 0, 1);
     if (r == 1)
         return 1;
@@ -664,6 +668,7 @@ kick_delayed_job(Server *s, Job *j)
     return 0;
 }
 
+// 判断 tube 是否有 buried job
 static int
 buried_job_p(Tube *t)
 {
@@ -676,6 +681,7 @@ static uint
 kick_buried_jobs(Server *s, Tube *t, uint n)
 {
     uint i;
+    // 遍历所有 buried job
     for (i = 0; (i < n) && buried_job_p(t); ++i) {
         kick_buried_job(s, t->buried.next);
     }
@@ -693,6 +699,7 @@ kick_delayed_jobs(Server *s, Tube *t, uint n)
     return i;
 }
 
+// 尽量 kick n 个 job
 static uint
 kick_jobs(Server *s, Tube *t, uint n)
 {
@@ -754,6 +761,7 @@ static bool
 touch_job(Conn *c, Job *j)
 {
     if (is_job_reserved_by_conn(c, j)) {
+        // 重新推迟 TTR 期限
         j->r.deadline_at = nanoseconds() + j->r.ttr;
         c->soonest_job = NULL;
         return true;
@@ -895,7 +903,6 @@ _skip(Conn *c, int64 n, char *msg, int msglen)
     c->state = STATE_BITBUCKET;
 }
 
-// enqueue a complete job into delay heap or ready heap
 static void
 enqueue_incoming_job(Conn *c)
 {
@@ -1293,6 +1300,7 @@ maybe_enqueue_incoming_job(Conn *c)
 static Job *
 remove_this_reserved_job(Conn *c, Job *j)
 {
+    // 从 reserved 链表移除
     j = job_list_remove(j);
     if (j) {
         global_stat.reserved_ct--;
@@ -1306,6 +1314,7 @@ remove_this_reserved_job(Conn *c, Job *j)
 static Job *
 remove_reserved_job(Conn *c, Job *j)
 {
+    // 如果 j 不是被 c reserved 则无法删除
     if (!is_job_reserved_by_conn(c, j))
         return NULL;
     return remove_this_reserved_job(c, j);
@@ -1503,7 +1512,7 @@ dispatch_cmd(Conn *c)
 
         /* try to get a new job for this guy */
         wait_for_job(c, timeout); // 永久阻塞 timeout 为 -1
-        // 立刻分发 job
+        // 有新 reserve 就尝试下发 job
         process_queue();
         return;
 
@@ -1531,6 +1540,7 @@ dispatch_cmd(Conn *c)
         }
 
         // Job can be in ready, buried or delayed states.
+        // 当指定 jobId 时，只要 job 没被别的 conn reserve，都从所在队列出队
         if (j->r.state == Ready) {
             j = remove_ready_job(j);
         } else if (j->r.state == Buried) {
@@ -1556,6 +1566,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // 查找 job 并出队
         {
             Job *jf = job_find(id);
             j = remove_reserved_job(c, jf);
@@ -1574,7 +1585,7 @@ dispatch_cmd(Conn *c)
 
         j->tube->stat.total_delete_ct++;
 
-        j->r.state = Invalid;
+        j->r.state = Invalid; // 标记 job 被删除
         r = walwrite(&c->srv->wal, j);
         walmaint(&c->srv->wal);
         job_free(j);
@@ -1595,6 +1606,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // 先出队
         j = remove_reserved_job(c, job_find(id));
 
         if (!j) {
@@ -1613,10 +1625,12 @@ dispatch_cmd(Conn *c)
             j->walresv += z;
         }
 
+        // 更新 pri 和 delay
         j->r.pri = pri;
         j->r.delay = delay;
         j->r.release_ct++;
 
+        // 再重新入队
         r = enqueue_job(c->srv, j, delay, !!delay);
         if (r < 0) {
             reply_serr(c, MSG_INTERNAL_ERROR);
@@ -1648,6 +1662,7 @@ dispatch_cmd(Conn *c)
             return;
         }
 
+        // 能更新 pri
         j->r.pri = pri;
         r = bury_job(c->srv, j, 1);
         if (!r) {
@@ -1793,6 +1808,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // tube 不存在则创建
         TUBE_ASSIGN(t, tube_find_or_make(name));
         if (!t) {
             reply_serr(c, MSG_OUT_OF_MEMORY);
@@ -1822,6 +1838,7 @@ dispatch_cmd(Conn *c)
         }
 
         r = 1;
+        // 直接加入 watch 集合
         if (!ms_contains(&c->watch, t))
             r = ms_append(&c->watch, t);
         TUBE_ASSIGN(t, NULL);
@@ -1848,6 +1865,7 @@ dispatch_cmd(Conn *c)
             t = NULL;
         }
 
+        // 不能 ignore 唯一一个 tube
         if (t && c->watch.len < 2) {
             reply_msg(c, MSG_NOT_IGNORED);
             return;
@@ -1860,6 +1878,7 @@ dispatch_cmd(Conn *c)
         return;
 
     case OP_QUIT:
+        // 标记为关闭连接
         c->state = STATE_CLOSE;
         return;
 
@@ -1885,6 +1904,9 @@ dispatch_cmd(Conn *c)
         // Always pause for a positive amount of time, to make sure
         // that waiting clients wake up when the deadline arrives.
         if (delay == 0) {
+            // 新 delay 为 0 本意是清除 pause 时间
+            // 但 delay 会被赋值存到 t->pause 字段，后者兼顾了 bool 类型
+            // 所以当 delay 为 0 时显式修改为 1ns
             delay = 1;
         }
 
