@@ -20,7 +20,7 @@ static int reserve(Wal *w, int n);
 // If no files are found, sets w->next to 1 and
 // returns a large number.
 // 扫描 w->dir 日志目录，获取 binlog.NNN 后缀，返回下一个未使用的 binlog 序号，并递增 w->next
-// 无 binlog 则从 2^30 开始
+// 返回 min，而 w->next 为 max+1
 static int
 walscandir(Wal *w)
 {
@@ -28,14 +28,15 @@ walscandir(Wal *w)
     static const int len = sizeof(base) - 1;
     DIR *d;
     struct dirent *e;
-    int min = 1<<30; // 2^30
+    int min = 1<<30; // 类似 INT_MAX
     int max = 0;
     int n;
     char *p;
 
     d = opendir(w->dir);
-    if (!d) return min;
+    if (!d) return min; // binlog 目录不存在
 
+    // 逐个扫描
     while ((e = readdir(d))) {
         if (strncmp(e->d_name, base, len) == 0) {
             n = strtol(e->d_name+len, &p, 10);
@@ -191,8 +192,10 @@ walwrite(Wal *w, Job *j)
     if (!w->use) return 1;
     if (w->cur->resv > 0 || usenext(w)) {
         if (j->file) {
+            // 只写 job rec
             r = filewrjobshort(w->cur, j);
         } else {
+            // 还要写 job body
             r = filewrjobfull(w->cur, j);
         }
     }
@@ -259,6 +262,7 @@ static int
 needfree(Wal *w, int n)
 {
     if (w->tail->free >= n) return n;
+    // 容量不足，滚动到下一个 binlog
     if (makenextfile(w)) return n;
     return 0;
 }
@@ -349,7 +353,6 @@ reserve(Wal *w, int n)
         return n;
     }
 
-    // 滚动文件
     r = needfree(w, n);
     if (r != n) {
         twarnx("needfree");
@@ -406,6 +409,7 @@ walresvupdate(Wal *w)
 
 
 // Returns the number of locks acquired: either 0 or 1.
+// 打开 bindir/lock 文件并上锁，故意丢弃 fd
 int
 waldirlock(Wal *w)
 {
@@ -452,8 +456,7 @@ walread(Wal *w, Job *list, int min)
     int i;
     int err = 0;
 
-    // 如果是首次启动 min: 2^30,  w->next: 1
-    // 遍历所有 binlog 文件，打开，读取 job 到 list
+    // 回放所有 binlog 文件 [min, max/w->next-1]
     for (i = min; i < w->next; i++) {
         File *f = new(File);
         if (!f) {
@@ -476,7 +479,9 @@ walread(Wal *w, Job *list, int min)
         }
 
         f->fd = fd;
+        // 记录此 binlog
         fileadd(f, w);
+        // 回放 binlog job 到 list
         err |= fileread(f, list);
         if (close(fd) == -1)
             twarn("close");
@@ -494,14 +499,18 @@ walinit(Wal *w, Job *list)
 {
     int min;
 
+    // 扫描获取 min, next binlog 序号
     min = walscandir(w);
+    // 回放所有 binlog
     walread(w, list, min);
 
     // first writable file
+    // 创建下一个 binlog file
     if (!makenextfile(w)) {
         twarnx("makenextfile");
         exit(1);
     }
 
+    // 当前使用最后一个
     w->cur = w->tail;
 }

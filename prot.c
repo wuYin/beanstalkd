@@ -2440,7 +2440,7 @@ prot_replay(Server *s, Job *list)
     int64 t;
     int r;
 
-    // 遍历链表
+    // 遍历循环链表
     for (j = list->next ; j != list ; j = nj) {
         nj = j->next;
         job_list_remove(j);

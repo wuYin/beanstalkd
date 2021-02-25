@@ -27,7 +27,9 @@ void srv_acquire_wal(Server *s) {
 
         Job list = {.prev=NULL, .next=NULL};
         list.prev = list.next = &list;
+        // 读取 binlog job log 到 list
         walinit(&s->wal, &list);
+        // 逐个回放
         int ok = prot_replay(s, &list);
         if (!ok) {
             twarnx("failed to replay log");

@@ -130,19 +130,19 @@ fileread(File *f, Job *list)
 {
     int err = 0, v;
 
-    // 1. binlog 版本号
+    // 1. 读 int 前 4 个字节，即 binlog 版本号
     if (!readfull(f, &v, sizeof(v), &err, "version")) {
         return err;
     }
     switch (v) {
     case Walver:
         fileincref(f);
-        // 2. job record
         while (readrec(f, list, &err));
         filedecref(f);
         return err;
     case Walver5:
         fileincref(f);
+        // 2. 逐个读取此 binlog 中的所有 job rec
         while (readrec5(f, list, &err));
         filedecref(f);
         return err;
@@ -294,6 +294,7 @@ Error:
 
 // Readrec5 is like readrec, but it reads a record in "version 5"
 // of the log format.
+// 读取一条完整的 job rec 或 full job 到 list l 尾部
 static int
 readrec5(File *f, Job *l, int *err)
 {
@@ -304,6 +305,7 @@ readrec5(File *f, Job *l, int *err)
     Tube *t;
     char tubename[MAX_TUBE_NAME_LEN];
 
+    // 1. 8 bytes: 读 tube name 长度
     r = read(f->fd, &namelen, sizeof(namelen));
     if (r == -1) {
         twarn("read");
@@ -322,6 +324,7 @@ readrec5(File *f, Job *l, int *err)
     }
 
     if (namelen) {
+        // 2. namelen bytes: 读 tube name
         r = readfull(f, tubename, namelen, err, "v5 tube name");
         if (!r) {
             return 0;
@@ -330,6 +333,7 @@ readrec5(File *f, Job *l, int *err)
     }
     tubename[namelen] = '\0';
 
+    // 3. 读取完整的 job record
     r = readfull(f, &jr, Jobrec5size, err, "v5 job struct");
     if (!r) {
         return 0;
@@ -347,9 +351,12 @@ readrec5(File *f, Job *l, int *err)
         // Therefore the job itself has either been
         // deleted or migrated; either way, this record
         // should be ignored.
+        // 没有读到 tube name，此日志非 PUT 写入
+        // 但全局 jobs 里没找到，说明此 job 的源 job 所在日志已被删除，本条日志可被忽略
         return 1;
     }
 
+    // 回放状态
     switch (jr.state) {
     case Reserved:
         jr.state = Ready;
@@ -365,11 +372,13 @@ readrec5(File *f, Job *l, int *err)
                         job_data_size_limit);
                 goto Error;
             }
+            // 首次出现的 job 需创建
             t = tube_find_or_make(tubename);
             j = make_job_with_id(jr.pri, jr.delay, jr.ttr, jr.body_size,
                                  t, jr.id);
             job_list_reset(j);
         }
+        // 更新各种属性
         j->r.id = jr.id;
         j->r.pri = jr.pri;
         j->r.delay = jr.delay * 1000; // us => ns
@@ -383,9 +392,12 @@ readrec5(File *f, Job *l, int *err)
         j->r.bury_ct = jr.bury_ct;
         j->r.kick_ct = jr.kick_ct;
         j->r.state = jr.state;
+
+        // 读到一条完整的 job rec
         job_list_insert(l, j);
 
         // full record; read the job body
+        // 如果是带 body 的则继续读
         if (namelen) {
             if (jr.body_size != j->r.body_size) {
                 warnpos(f, -r, "job %"PRIu64" size changed", j->r.id);
@@ -401,7 +413,9 @@ readrec5(File *f, Job *l, int *err)
             // since this is a full record, we can move
             // the file pointer and decref the old
             // file, if any
+            // 若 job 已在旧 binlog 中出现过，则释放其引用，让 binlog 尝试有序做 GC
             filermjob(j->file, j);
+            // 更新 job 指向新的 binlog
             fileaddjob(f, j);
         }
         j->walused += sz;
@@ -410,6 +424,7 @@ readrec5(File *f, Job *l, int *err)
         return 1;
     case Invalid:
         if (j) {
+            // 被 delete 过的 job 直接删除
             job_list_remove(j);
             filermjob(j->file, j);
             job_free(j);
@@ -428,7 +443,7 @@ Error:
 }
 
 
-// 保证从 f 中读取 n 字节到内存 c 中，desc 是读取动作的错误描述
+// 保证从 f 中读取 n 字节到内存 c 中，desc 是读取动作描述，日志记录用
 static int
 readfull(File *f, void *c, int n, int *err, char *desc)
 {
@@ -493,6 +508,7 @@ filewopen(File *f)
         return;
     }
 
+    // 打开新 binlog 先写 version
     n = write(fd, &ver, sizeof(int));
     if (n < 0 || (size_t)n < sizeof(int)) {
         twarn("write %s", f->path);
@@ -535,6 +551,7 @@ filewrjobshort(File *f, Job *j)
     int r, nl;
 
     nl = 0; // name len 0 indicates short record
+    // 此处在 job rec 之前写入 tubelen 为 0，用于标识此 job 是 job rec
     r = filewrite(f, j, &nl, sizeof nl) &&
         filewrite(f, j, &j->r, sizeof j->r);
     if (!r) return 0;
@@ -592,6 +609,7 @@ fileinit(File *f, Wal *w, int n)
 
 // Adds f to the linked list in w,
 // updating w->tail and w->head as necessary.
+// 将 binlog.x file f 追加到链表
 Wal*
 fileadd(File *f, Wal *w)
 {

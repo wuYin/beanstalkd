@@ -439,13 +439,14 @@ enum
 struct Wal {
     int    filesize; // NOTE: -s max binlog file size
     int    use; // 命令行是否有 -b bin_dir
-    char   *dir; // NOTE: -b binlog dir
-    File   *head; // 打开的文件列表
+    char   *dir; // -b binlog dir
+    File   *head; // 打开的 binlog 文件链表
     File   *cur;
     File   *tail;
     int    nfile;
-    int    next;
+    int    next; // 下一 binlog 序号
 
+    // stat
     int64  resv;  // bytes reserved
     int64  alive; // bytes in use
 
@@ -472,7 +473,7 @@ struct File {
     int  fd;
     int  free;
     int  resv;
-    char *path;
+    char *path; // binlog 路径
     Wal  *w;
 
     Job jlist;    // jobs written in this file
