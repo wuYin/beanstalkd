@@ -314,6 +314,8 @@ balancerest(Wal *w, File *b, int n)
 // We might have to allocate a new file.
 // Returns 1 on success, otherwise 0. If there was a failure,
 // w->tail is not updated.
+// 将空间不足的 cur binlog 滚动 n 字节到 tail binlog
+// 挪动 cur 到 next binlog 并关闭
 static int
 balance(Wal *w, int n)
 {
@@ -338,6 +340,8 @@ balance(Wal *w, int n)
 
 
 // Returns the number of bytes successfully reserved: either 0 or n.
+// reserve 是 walwrite 的前置操作，二者其实是绑定的，不会出现无限 reserve 的情况
+// 空间不足则滚动 binlog
 static int
 reserve(Wal *w, int n)
 {
@@ -353,6 +357,7 @@ reserve(Wal *w, int n)
         return n;
     }
 
+    // 当前 binlog 剩余空间不足，创建下一个 binlog 更新 cur 使用并关闭之前的 cur binlog
     r = needfree(w, n);
     if (r != n) {
         twarnx("needfree");
@@ -375,7 +380,7 @@ reserve(Wal *w, int n)
 
 
 // Returns the number of bytes reserved or 0 on error.
-// 为 put 新 job j 预留空间
+// 为 put 新 job j 预留/扩展空间
 int
 walresvput(Wal *w, Job *j)
 {
@@ -389,7 +394,7 @@ walresvput(Wal *w, Job *j)
     z += j->r.body_size; // 4. job_body
 
     // plus space for a delete to come later
-    z += sizeof(int);
+    z += sizeof(int); // 预留之后此 job 的其他操作
     z += sizeof(Jobrec);
 
     return reserve(w, z);

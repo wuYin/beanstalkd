@@ -446,7 +446,6 @@ struct Wal {
     int    nfile;
     int    next; // 下一 binlog 序号
 
-    // stat
     int64  resv;  // bytes reserved
     int64  alive; // bytes in use
 

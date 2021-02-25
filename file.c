@@ -416,6 +416,10 @@ readrec5(File *f, Job *l, int *err)
             // 若 job 已在旧 binlog 中出现过，则释放其引用，让 binlog 尝试有序做 GC
             filermjob(j->file, j);
             // 更新 job 指向新的 binlog
+            // GC 缺陷
+            // 场景：put 一个 jobA 到 tubeA 但不使用，随后只用 tubeB 并产生了 1000 个 binlog
+            // 问题：jobA 始终指向 binlog.0 导致其没有机会 gc，之后的 1000 个 binlog.N 都不会被 gc
+            //      每次重启都需读 1000 个 binlog 文件并 replay，单线程会导致 replay 期间不响应请求，直接不可用
             fileaddjob(f, j);
         }
         j->walused += sz;
