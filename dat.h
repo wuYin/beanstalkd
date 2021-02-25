@@ -475,7 +475,7 @@ struct File {
     char *path; // binlog 路径
     Wal  *w;
 
-    Job jlist;    // jobs written in this file
+    Job jlist;    // jobs written in this file // full job 链表
 };
 int  fileinit(File*, Wal*, int);
 Wal* fileadd(File*, Wal*);

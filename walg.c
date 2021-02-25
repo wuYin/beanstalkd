@@ -99,8 +99,8 @@ ratio(Wal *w)
 {
     int64 n, d;
 
-    d = w->alive + w->resv;
-    n = (int64)w->nfile * (int64)w->filesize - d; // 所有 binlog 大小上限 - 已使用大小 = 剩余大小
+    d = w->alive + w->resv; // 写入 file 的字节数，加上预留字节数
+    n = (int64)w->nfile * (int64)w->filesize - d; // 所有 binlog 大小上限 - 已使用了容量 = 未使用的
     if (!d) return 0;
     return n / d;
 }

@@ -96,6 +96,7 @@ fileaddjob(File *f, Job *j)
 {
     Job *h;
 
+    // 只将 full job 写入 jlist
     h = &f->jlist;
     if (!h->fprev) h->fprev = h;
     j->file = f; // 绑定 j 的 binlog file
