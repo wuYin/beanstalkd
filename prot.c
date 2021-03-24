@@ -479,6 +479,7 @@ process_queue()
         }
 
         // 2. 取出 job 所在 tube 等待最久的 conn
+        // 7. 出队列准备 reserve，j->tube--
         Conn *c = ms_take(&j->tube->waiting_conns);
         if (c == NULL) {
             twarnx("waiting_conns is empty");
@@ -1513,6 +1514,8 @@ dispatch_cmd(Conn *c)
         /* try to get a new job for this guy */
         wait_for_job(c, timeout); // 永久阻塞 timeout 为 -1
         // 有新 reserve 就尝试下发 job
+        // 非并发逻辑，即使 timeout 为 0，conn 虽然被立刻标记为过期
+        // 但此时阻塞调用了 process_queue 有 ready 的 job 会立刻下发
         process_queue();
         return;
 
@@ -1816,6 +1819,7 @@ dispatch_cmd(Conn *c)
         }
 
         c->use->using_ct--;
+        // 4. 旧 use--，新 use++
         TUBE_ASSIGN(c->use, t);
         TUBE_ASSIGN(t, NULL);
         c->use->using_ct++;
@@ -1831,6 +1835,7 @@ dispatch_cmd(Conn *c)
         }
         op_ct[type]++;
 
+        // 5. 新的 watch++
         TUBE_ASSIGN(t, tube_find_or_make(name));
         if (!t) {
             reply_serr(c, MSG_OUT_OF_MEMORY);
@@ -1871,6 +1876,7 @@ dispatch_cmd(Conn *c)
             return;
         }
 
+        // 6. 被 ignore 的 tube--
         if (t)
             ms_remove(&c->watch, t); /* may free t if refcount => 0 */
         t = NULL;

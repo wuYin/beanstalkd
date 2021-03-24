@@ -13,6 +13,8 @@ static int cur_conn_ct = 0, cur_worker_ct = 0, cur_producer_ct = 0;
 static uint tot_conn_ct = 0;
 int verbose = 0;
 
+// 1. 新建连接 newConn 时，watch default_tube
+// 2. OP_WATCH 加入 watch 集合
 static void
 on_watch(Ms *a, Tube *t, size_t i)
 {
@@ -22,6 +24,7 @@ on_watch(Ms *a, Tube *t, size_t i)
     t->watching_ct++;
 }
 
+// 1. OP_IGNORE 的 tube
 static void
 on_ignore(Ms *a, Tube *t, size_t i)
 {
@@ -42,13 +45,14 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
 
     // 将 tubeX 加入 watch 集合
     ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
+    // 1. watch default tube, default ref++
     if (!ms_append(&c->watch, watch)) {
         free(c);
         twarn("OOM");
         return NULL;
     }
 
-    // use tubeY
+    // 2. use default tube, default ref++
     TUBE_ASSIGN(c->use, use);
     use->using_ct++;
 
@@ -150,7 +154,7 @@ conntickat(Conn *c)
 
 // Remove c from the c->srv heap and reschedule it using the value
 // returned by conntickat if there is an outstanding timeout in the c.
-// 刷新 c 的超时时间，重新调度
+// 刷新 c 的 reserve-timeout / 最快 TTR 时间
 void
 connsched(Conn *c)
 {
@@ -162,7 +166,7 @@ connsched(Conn *c)
     // 2. 刷新下次超时时间戳，重新调度
     c->tickat = conntickat(c);
 
-    // 3. 无超时则不加入 s.conns 队列中（如无限 reserve）
+    // 3. 无超时则不加入 s.conns 队列中（如从未 reserve）
     if (c->tickat) {
         heapinsert(&c->srv->conns, c);
         c->in_conns = 1;
@@ -280,6 +284,7 @@ connclose(Conn *c)
 
     ms_clear(&c->watch);
     c->use->using_ct--;
+    // 3. 连接关闭时，c.use--
     TUBE_ASSIGN(c->use, NULL);
 
     if (c->in_conns) {

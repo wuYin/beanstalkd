@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 // 全局 tube 集合
 struct Ms tubes;
@@ -54,15 +55,19 @@ tube_dref(Tube *t)
         return;
     }
 
+//    fprintf(stderr, "tube: %s, ref:--%d\n", t->name, t->refs);
     --t->refs;
-    if (t->refs < 1)
-        tube_free(t); // 自动 gc
+    if (t->refs < 1) {
+//        fprintf(stderr, "GCed: %s\n", t->name);
+        tube_free(t);
+    } // 自动 gc
 }
 
 void
 tube_iref(Tube *t)
 {
     if (!t) return;
+//    fprintf(stderr, "tube: %s, ref:++%d\n", t->name, t->refs);
     ++t->refs;
 }
 
