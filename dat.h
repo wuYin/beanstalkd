@@ -62,6 +62,7 @@ typedef int(FAlloc)(int, int);
 // The maximum value that job_data_size_limit can be set to via "-z".
 // It could be up to INT32_MAX-2 (~2GB), but set it to 1024^3 (1GB).
 // The width is restricted by Jobrec.body_size that is int32.
+// 限制最大 1GB
 #define JOB_DATA_SIZE_LIMIT_MAX 1073741824
 
 // The default value for the fsync (-f) parameter, milliseconds.
@@ -264,6 +265,7 @@ struct Tube {
 };
 
 
+// 宏展开 __VA_ARGS__ 输出行号等调试信息
 // Prints warning message on stderr in the format:
 // <progname>: FILE:LINE in FUNC: <fmt>: <errno_msg>
 #define twarn(...) __twarn(__VA_ARGS__, "")
@@ -433,7 +435,7 @@ void conn_reserve_job(Conn *c, Job *j);
 
 enum
 {
-    Filesizedef = (10 << 20)
+    Filesizedef = (10 << 20) // WAL 单文件 10MB
 };
 
 struct Wal {

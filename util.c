@@ -14,7 +14,7 @@ const char *progname;
 
 static void
 vwarnx(const char *err, const char *fmt, va_list args)
-__attribute__((format(printf, 2, 0)));
+__attribute__((format(printf, 2, 0))); // 编译函数属性优化
 
 static void
 vwarnx(const char *err, const char *fmt, va_list args)
@@ -27,6 +27,7 @@ vwarnx(const char *err, const char *fmt, va_list args)
     fputc('\n', stderr);
 }
 
+// 额外打印 errno
 void
 warn(const char *fmt, ...)
 {
@@ -142,7 +143,7 @@ parse_size_t(char *str)
     char r, x;
     size_t size;
 
-    r = sscanf(str, "%zu%c", &size, &x); // NOTE: size must be dependent value
+    r = sscanf(str, "%zu%c", &size, &x); // 多读 1 个字符避免 sscanf 截断
     if (1 != r) {
         warnx("invalid size: %s", str);
         usage(5);
@@ -157,13 +158,13 @@ optparse(Server *s, char **argv)
 {
     int64 ms;
     char *arg, *tmp;
-// 如果当前 arg 有值则返回，无值则取下一 argv 参数项，否则返回 default
+// arg 非空即返回，为空则取 argv，也为空则求值 x
 #   define EARGF(x) (*arg ? (tmp=arg,arg="",tmp) : (*argv ? *argv++ : (x)))
 
-    // 逐个遍历选项
-    // 若为参数项，则判断是否符合 `-k`
+    // 检查 '-' 前缀
     while ((arg = *argv++) && *arg++ == '-' && *arg) {
         char c;
+        // 跳过 '-k'，注意兼容了配置格式 '-p11400' 从 1 开始解析
         while ((c = *arg++)) {
             switch (c) {
                 case 'p':
@@ -210,7 +211,7 @@ optparse(Server *s, char **argv)
                 case 'v':
                     printf("beanstalkd %s\n", version);
                     exit(0);
-                case 'V':
+                case 'V': // -V -V 不覆盖，计数对 verbose 做过滤，显示更详细的调试信息
                     verbose++;
                     break;
                 default:

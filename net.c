@@ -42,16 +42,16 @@ make_inet_socket(char *host, char *port)
     struct addrinfo *airoot, *ai, hints;
 
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC; // 未指定协议族
+    hints.ai_family = AF_UNSPEC; // IPV4,IPV6 均可
     hints.ai_socktype = SOCK_STREAM; // TCP
-    hints.ai_flags = AI_PASSIVE; // 被动绑定
+    hints.ai_flags = AI_PASSIVE; // 指示 addrinfo 将在 bind 中使用
     r = getaddrinfo(host, port, &hints, &airoot);
     if (r != 0) {
         twarnx("getaddrinfo(): %s", gai_strerror(r));
         return -1;
     }
 
-    // 遍历要监听的地址
+    // 遍历匹配 hints 的网络地址
     for (ai = airoot; ai; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd == -1) {
@@ -59,7 +59,7 @@ make_inet_socket(char *host, char *port)
             continue;
         }
 
-        // 若 socket 无数据可读则不阻塞
+        // sokcet fd O_NONBLOCK
         r = set_nonblocking(fd);
         if (r == -1) {
             close(fd);
@@ -74,19 +74,21 @@ make_inet_socket(char *host, char *port)
             close(fd);
             continue;
         }
+        // 启用长连接
         r = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &flags, sizeof flags);
         if (r == -1) {
             twarn("setting SO_KEEPALIVE on fd %d", fd);
             close(fd);
             continue;
         }
-        // 强制关闭连接
+        // close 立刻返回，不等待 write buffer flush
         r = setsockopt(fd, SOL_SOCKET, SO_LINGER, &linger, sizeof linger);
         if (r == -1) {
             twarn("setting SO_LINGER on fd %d", fd);
             close(fd);
             continue;
         }
+        // 避免小 packet 造成包延迟
         r = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flags, sizeof flags);
         if (r == -1) {
             twarn("setting TCP_NODELAY on fd %d", fd);
