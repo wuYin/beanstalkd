@@ -28,7 +28,7 @@ sockinit(void)
 }
 
 
-// 新增、删除或修改 socket 上注册的 event
+// 新增、删除或修改 socket 上注册的 epoll event
 int
 sockwant(Socket *s, int rw)
 {
@@ -55,7 +55,7 @@ sockwant(Socket *s, int rw)
         break;
     }
     ev.events |= EPOLLRDHUP | EPOLLPRI;
-    ev.data.ptr = s; // event handler attach 到 event
+    ev.data.ptr = s; // Socket attach 到 event
 
     return epoll_ctl(epfd, op, s->fd, &ev);
 }
@@ -74,6 +74,7 @@ socknext(Socket **s, int64 timeout)
     }
 
     if (r > 0) {
+        // 分离 event 中的 Socket
         *s = ev.data.ptr;
         if (ev.events & (EPOLLHUP|EPOLLRDHUP)) { // connection closed
             return 'h';

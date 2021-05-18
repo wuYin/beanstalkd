@@ -61,6 +61,7 @@ set_sig_handlers()
         exit(111);
     }
 
+    // 收到 SIGUSR1 信号后进入 drain 模式
     sa.sa_handler = enter_drain_mode;
     r = sigaction(SIGUSR1, &sa, 0);
     if (r == -1) {
@@ -72,6 +73,7 @@ set_sig_handlers()
     // Handle SIGTERM so the server is killed immediately and
     // not after 10 seconds timeout. See issue #527.
     if (getpid() == 1) {
+        // 在 docker 运行时收到 SIGTERM 直接 exit 进程
         sa.sa_handler = handle_sigterm_pid1;
         r = sigaction(SIGTERM, &sa, 0);
         if (r == -1) {
@@ -104,7 +106,7 @@ main(int argc, char **argv)
 
     srv.sock.fd = r;
 
-    // 3. 初始化实例，创建 default tube
+    // 3. 初始化实例，创建 tubes, default tube
     prot_init();
 
     if (srv.user)

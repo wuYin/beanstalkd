@@ -2401,7 +2401,7 @@ prot_init()
     memset(op_ct, 0, sizeof(op_ct));
 
     // generate random instance id and convert to hex representation
-    // 读取 8 位 /dev/random 并用 hex 作为实例 id
+    // 读取 8 位 /dev/random 并用扩展为 hex 作为实例 id
     int dev_random = open("/dev/urandom", O_RDONLY);
     if (dev_random < 0) {
         twarn("open /dev/urandom");
@@ -2409,7 +2409,7 @@ prot_init()
     }
 
     int i, r;
-    byte rand_data[instance_id_bytes];
+    byte rand_data[instance_id_bytes]; // unsigned char 类型数组，不论正负溢出均会截断
     r = read(dev_random, &rand_data, instance_id_bytes);
     if (r != instance_id_bytes) {
         twarn("read /dev/urandom");
@@ -2420,7 +2420,6 @@ prot_init()
     }
     close(dev_random);
 
-    // 读取内核信息
     if (uname(&node_info) == -1) {
         warn("uname");
         exit(50);

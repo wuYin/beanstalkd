@@ -128,7 +128,7 @@ struct Socket {
     // added value is platform depended: on OSX it can be > 1.
     // Value of 1 - socket was already added to event notifications,
     // otherwise it is 0.
-    // 是否为第一次注册
+    // 是否已经注册到 epollfd
     int    added;
 };
 
@@ -288,7 +288,7 @@ void warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void warnx(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 char* fmtalloc(char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void* zalloc(int n);
-#define new(T) zalloc(sizeof(T)) // new actually malloc + memset init
+#define new(T) zalloc(sizeof(T))
 void optparse(Server*, char**);
 
 extern const char *progname;
@@ -380,7 +380,7 @@ struct Conn {
     char   type;        // combination of CONN_TYPE_* values
     Conn   *next;       // only used in epollq functions
     Tube   *use;        // tube currently in use // put
-    int64  tickat;      // time at which to do more work; determines pos in heap
+    int64  tickat;      // time at which to do more work; determines pos in heap // server.conns 堆权重
     size_t tickpos;     // position in srv->conns, stale when in_conns=0
     byte   in_conns;    // 1 if the conn is in srv->conns heap, 0 otherwise
     Job    *soonest_job;// memoization of the soonest job // 在 reserved jobs 中 TTR 最快到期的 job
@@ -495,9 +495,9 @@ int  filewrjobfull(File*, Job*);
 #define Portdef "11300"
 
 struct Server {
-    char *port;
-    char *addr;
-    char *user;
+    char *port; // -p
+    char *addr; // -l
+    char *user; // -u
 
     Wal    wal;
     Socket sock;
