@@ -2044,7 +2044,6 @@ conn_process_io(Conn *c)
         }
 
         // c->cmd_read > LINE_BUF_SIZE can't happen
-
         if (c->cmd_read == LINE_BUF_SIZE) {
             // 1.2 命令过长不完整则丢弃
             // Command line too long.

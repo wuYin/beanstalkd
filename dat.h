@@ -20,6 +20,7 @@ typedef struct Socket Socket;
 typedef struct Server Server;
 typedef struct Wal    Wal;
 
+// event handler
 typedef void(*Handle)(void*, int rw);
 typedef int(FAlloc)(int, int);
 
@@ -252,6 +253,7 @@ struct Tube {
     char name[MAX_TUBE_NAME_LEN];
     Heap ready;
     Heap delay;       // 倒计时毫秒数
+
     Job buried;       // 链表头
 
     Ms waiting_conns; // 等待 Job 的消费连接
@@ -380,9 +382,13 @@ struct Conn {
     char   type;        // combination of CONN_TYPE_* values
     Conn   *next;       // only used in epollq functions
     Tube   *use;        // tube currently in use // put
+
+    // reserve ttr 消费超时
+    // reserve timeout 等待超时
     int64  tickat;      // time at which to do more work; determines pos in heap // server.conns 堆权重
     size_t tickpos;     // position in srv->conns, stale when in_conns=0
     byte   in_conns;    // 1 if the conn is in srv->conns heap, 0 otherwise
+
     Job    *soonest_job;// memoization of the soonest job // 在 reserved jobs 中 TTR 最快到期的 job
     int    rw;          // currently want: 'r', 'w', or 'h'
 
@@ -392,29 +398,32 @@ struct Conn {
     // Used to inform state machine that client no longer waits for the data.
     char   halfclosed;
 
-    // 读请求 buffer
-    char   cmd[LINE_BUF_SIZE];     // this string is NOT NUL-terminated
-    size_t cmd_len;
-    int    cmd_read;
 
-    // 写请求 buffer
+    // 写请求 buffera'c
     char *reply;
     int  reply_sent;
-    int  reply_len;
-    char reply_buf[LINE_BUF_SIZE]; // this string IS NUL-terminated
-
-    // How many bytes of in_job->body have been read so far. If in_job is NULL
-    // while in_job_read is nonzero, we are in bit bucket mode and
-    // in_job_read's meaning is inverted -- then it counts the bytes that
-    // remain to be thrown away.
-    // in_job 为 NULL 但 in_job_read 不为 0，说明在 bucket 模式，丢弃读
-    Job   *in_job;              // a job to be read from the client // 读 job
-    int64 in_job_read;          // 已读或要读的 body 大小
 
     // NOTE: writing job
     Job *out_job;               // a job to be sent to the client
     int out_job_sent;           // how many bytes of *out_job were sent already
 
+    int  reply_len;
+    char reply_buf[LINE_BUF_SIZE]; // this string IS NUL-terminated
+
+    // 读 command buffer
+    char   cmd[LINE_BUF_SIZE];     // this string is NOT NUL-terminated
+    size_t cmd_len;
+    int    cmd_read;
+
+    // How many bytes of in_job->body have been read so far. If in_job is NULL
+    // while in_job_read is nonzero, we are in bit bucket mode and
+    // in_job_read's meaning is inverted -- then it counts the bytes that
+    // remain to be thrown away.
+    // in_job 为 NULL 但 in_job_read 不为 0，说明在 bucket 模式，非法数据，丢弃读
+    Job   *in_job;              // a job to be read from the client // 读 job
+    int64 in_job_read;          // 已读或要读的 body 大小
+
+    // watching tube 集合，注意增删对应 tube 的引用计数
     Ms  watch;                  // the set of watched tubes by the connection // 正在 watch 的 tube 集合
     Job reserved_jobs;          // linked list header // 被 reserved 的 job 的链表
 };

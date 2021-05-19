@@ -30,7 +30,7 @@ make_tube(const char *name)
     Job j = {.tube = NULL};
     t->buried = j;
     t->buried.prev = t->buried.next = &t->buried;
-    ms_init(&t->waiting_conns, NULL, NULL);
+    ms_init(&t->waiting_conns, NULL, NULL); // 按顺序 FIFO
 
     return t;
 }

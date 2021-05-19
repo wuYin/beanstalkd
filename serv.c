@@ -71,7 +71,7 @@ srvserve(Server *s)
             exit(1);
         }
 
-        // 3.3 调用 sock handler
+        // 3.3 调用 socket handler
         if (rw) {
             sock->f(sock->x, rw);
         }

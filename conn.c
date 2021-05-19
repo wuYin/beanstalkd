@@ -45,7 +45,7 @@ make_conn(int fd, char start_state, Tube *use, Tube *watch)
 
     // 将 tubeX 加入 watch 集合
     ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
-    // 1. watch default tube, default ref++
+
     if (!ms_append(&c->watch, watch)) {
         free(c);
         twarn("OOM");
